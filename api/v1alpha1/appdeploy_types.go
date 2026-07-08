@@ -98,7 +98,8 @@ type AppDeployWorkload struct {
 	EnvFromSecrets      []string               `json:"envFromSecrets,omitempty"`
 	ImagePullSecrets    []string               `json:"imagePullSecrets,omitempty"`
 	VolumeMounts        []AppDeployVolumeMount `json:"volumeMounts,omitempty"`
-	// +kubebuilder:validation:Schemaless
+	// +kubebuilder:pruning:PreserveUnknownFields
+	// +kubebuilder:validation:Type=object
 	Overrides apiextensionsv1.JSON `json:"overrides,omitempty"`
 }
 
@@ -130,7 +131,8 @@ type AppDeployIngress struct {
 	Annotations   map[string]string      `json:"annotations,omitempty"`
 	TLSSecretName string                 `json:"tlsSecretName,omitempty"`
 	Rules         []AppDeployIngressRule `json:"rules,omitempty"`
-	// +kubebuilder:validation:Schemaless
+	// +kubebuilder:pruning:PreserveUnknownFields
+	// +kubebuilder:validation:Type=object
 	Overrides apiextensionsv1.JSON `json:"overrides,omitempty"`
 }
 
