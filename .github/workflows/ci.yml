@@ -39,15 +39,17 @@ jobs:
       - name: Compile Go packages
         run: go test ./... -run '^$'
 
-      - name: Set up kubectl
-        uses: azure/setup-kubectl@v4
+      - name: Set up kustomize
+        uses: imranismail/setup-kustomize@v3
         with:
-          version: v1.36.0
+          kustomize-version: 5.8.1
 
       - name: Generate install bundle
+        working-directory: ${{ github.workspace }}/config/default
         run: |
-          mkdir -p dist
-          kubectl kustomize config/default > dist/install.yaml
+          mkdir -p "$GITHUB_WORKSPACE/dist"
+          kustomize edit set image controller=${IMAGE_NAME}:${GITHUB_REF_NAME}
+          kustomize build . > "$GITHUB_WORKSPACE/dist/install.yaml"
 
       - name: Upload install bundle
         uses: actions/upload-artifact@v4
@@ -78,6 +80,7 @@ jobs:
         with:
           context: .
           file: ./Dockerfile
+          platforms: linux/amd64,linux/arm64
           push: true
           tags: |
             ${{ env.IMAGE_NAME }}:${{ github.ref_name }}
