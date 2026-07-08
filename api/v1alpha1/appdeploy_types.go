@@ -72,19 +72,23 @@ type AppDeployWorkload struct {
 	// +kubebuilder:validation:MinLength=1
 	Name string `json:"name"`
 	// +kubebuilder:default=Deployment
-	// +kubebuilder:validation:Enum=Deployment;StatefulSet
+	// +kubebuilder:validation:Enum=Deployment;StatefulSet;Job
 	Kind string `json:"kind,omitempty"`
 	// +kubebuilder:validation:MinLength=1
 	Scope string `json:"scope,omitempty"`
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
-	Image string `json:"image"`
+	Image   string   `json:"image"`
+	Command []string `json:"command,omitempty"`
+	Args    []string `json:"args,omitempty"`
 	// +kubebuilder:default:=1
 	Replicas *int32 `json:"replicas,omitempty"`
-	// +kubebuilder:validation:Required
-	// +kubebuilder:validation:Minimum=1
-	ContainerPort int32                       `json:"containerPort"`
-	Resources     corev1.ResourceRequirements `json:"resources,omitempty"`
+	// +kubebuilder:validation:Minimum=0
+	BackoffLimit *int32 `json:"backoffLimit,omitempty"`
+	// +kubebuilder:validation:Minimum=0
+	TTLSecondsAfterFinished *int32                      `json:"ttlSecondsAfterFinished,omitempty"`
+	ContainerPort           *int32                      `json:"containerPort,omitempty"`
+	Resources               corev1.ResourceRequirements `json:"resources,omitempty"`
 	// +kubebuilder:validation:Enum=Always;IfNotPresent;Never
 	ImagePullPolicy     string                 `json:"imagePullPolicy,omitempty"`
 	ServiceType         string                 `json:"serviceType,omitempty"`

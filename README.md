@@ -10,6 +10,7 @@ From a single `AppDeploy` resource, the controller can create:
 - `ExternalSecret` objects for ESO
 - `Deployment` objects
 - `StatefulSet` objects with headless services
+- `Job` objects for one-off workloads
 - `Service` objects
 - `Ingress` objects
 
@@ -32,7 +33,7 @@ Top-level spec fields:
 - `selectedNamespaces`: optional subset of `namespaces`
 - `configMaps`: config maps to create
 - `secrets`: ESO-backed secrets to fan out
-- `workloads`: deployments or stateful sets to create
+- `workloads`: deployments, stateful sets, or jobs to create
 - `ingresses`: ingress resources to create
 
 ### ConfigMaps
@@ -57,11 +58,15 @@ An empty `scope` means the config map is created in every selected namespace.
 ### Workloads
 
 - `name`: required
-- `kind`: `Deployment` or `StatefulSet`
+- `kind`: `Deployment`, `StatefulSet`, or `Job`
 - `scope`: optional
 - `image`: required
-- `replicas`: optional, defaults to `1`
-- `containerPort`: required
+- `replicas`: optional for workloads that run as deployments or stateful sets, defaults to `1`
+- `containerPort`: required for deployments and stateful sets
+- `command`: optional, useful for jobs
+- `args`: optional, useful for jobs
+- `backoffLimit`: optional, useful for jobs
+- `ttlSecondsAfterFinished`: optional, useful for jobs
 - `resources`: optional
 - `imagePullPolicy`: optional
 - `serviceType`: optional
@@ -92,6 +97,7 @@ An empty `scope` means the config map is created in every selected namespace.
 - duplicate target object names in the same namespace are rejected
 - empty `scope` means “apply to every selected namespace”
 - `StatefulSet` workloads require `headlessServiceName`
+- `Job` workloads skip service creation
 - `volumeMounts` must specify exactly one of `configMapName` or `secretName`
 - `overrides` may only use allowlisted fields and may not collide with schema-managed fields
 

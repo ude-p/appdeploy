@@ -23,6 +23,7 @@ import (
 	"strings"
 
 	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -130,13 +131,20 @@ func (r *AppDeployReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 					err = statefulSetErr
 					return ctrl.Result{}, err
 				}
+			case "Job":
+				if jobErr := r.reconcileJob(ctx, namespace, &workload); jobErr != nil {
+					err = jobErr
+					return ctrl.Result{}, err
+				}
 			default:
 				err = fmt.Errorf("spec.workloads[%d].kind %q is not supported", i, workload.Kind)
 				return ctrl.Result{}, err
 			}
-			if serviceErr := r.reconcileService(ctx, namespace, &workload); serviceErr != nil {
-				err = serviceErr
-				return ctrl.Result{}, err
+			if workload.Kind != "Job" {
+				if serviceErr := r.reconcileService(ctx, namespace, &workload); serviceErr != nil {
+					err = serviceErr
+					return ctrl.Result{}, err
+				}
 			}
 		}
 
@@ -184,6 +192,9 @@ func (r *AppDeployReconciler) validate(appdeploy *appdeployv1alpha1.AppDeploy) e
 			if _, ok := namespaceSet[workload.Scope]; !ok {
 				return fmt.Errorf("spec.workloads[%d].scope %q must match one of spec.namespaces", i, workload.Scope)
 			}
+		}
+		if workload.Kind != "Job" && workload.ContainerPort == nil {
+			return fmt.Errorf("spec.workloads[%d].containerPort must be set when kind is %q", i, workload.Kind)
 		}
 		if workload.Kind == "StatefulSet" && workload.HeadlessServiceName == "" {
 			return fmt.Errorf("spec.workloads[%d].headlessServiceName must be set when kind is StatefulSet", i)
@@ -387,6 +398,7 @@ func (r *AppDeployReconciler) reconcileDeployment(ctx context.Context, namespace
 	if workload.Replicas != nil {
 		replicas = *workload.Replicas
 	}
+	containerPort := workloadContainerPort(workload)
 	envFrom := buildEnvFromSources(workload)
 	imagePullSecrets := buildImagePullSecrets(workload)
 	policy := imagePullPolicy(workload)
@@ -426,7 +438,7 @@ func (r *AppDeployReconciler) reconcileDeployment(ctx context.Context, namespace
 								EnvFrom:         envFrom,
 								VolumeMounts:    volumeMounts,
 								Resources:       resources,
-								Ports:           []corev1.ContainerPort{{ContainerPort: workload.ContainerPort, Protocol: corev1.ProtocolTCP}},
+								Ports:           []corev1.ContainerPort{{ContainerPort: containerPort, Protocol: corev1.ProtocolTCP}},
 							},
 						},
 						ImagePullSecrets: imagePullSecrets,
@@ -467,7 +479,7 @@ func (r *AppDeployReconciler) reconcileDeployment(ctx context.Context, namespace
 	if err := applyDeploymentOverrides(deployment, workload.Overrides.Raw); err != nil {
 		return err
 	}
-	deployment.Spec.Template.Spec.Containers[0].Ports = []corev1.ContainerPort{{ContainerPort: workload.ContainerPort, Protocol: corev1.ProtocolTCP}}
+	deployment.Spec.Template.Spec.Containers[0].Ports = []corev1.ContainerPort{{ContainerPort: containerPort, Protocol: corev1.ProtocolTCP}}
 
 	return r.Update(ctx, deployment)
 }
@@ -477,7 +489,8 @@ func (r *AppDeployReconciler) reconcileService(ctx context.Context, namespace st
 		return nil
 	}
 
-	servicePort := workload.ContainerPort
+	containerPort := workloadContainerPort(workload)
+	servicePort := containerPort
 	if workload.ServicePort != nil {
 		servicePort = *workload.ServicePort
 	}
@@ -496,7 +509,7 @@ func (r *AppDeployReconciler) reconcileService(ctx context.Context, namespace st
 				Selector: map[string]string{
 					"appdeploy.appdeploy.io/workload": workload.Name,
 				},
-				Ports: []corev1.ServicePort{{Port: servicePort, TargetPort: intstr.FromInt(int(workload.ContainerPort)), Protocol: corev1.ProtocolTCP}},
+				Ports: []corev1.ServicePort{{Port: servicePort, TargetPort: intstr.FromInt(int(containerPort)), Protocol: corev1.ProtocolTCP}},
 			},
 		}
 		return r.Create(ctx, service)
@@ -509,7 +522,7 @@ func (r *AppDeployReconciler) reconcileService(ctx context.Context, namespace st
 	service.Spec.Selector = map[string]string{
 		"appdeploy.appdeploy.io/workload": workload.Name,
 	}
-	service.Spec.Ports = []corev1.ServicePort{{Port: servicePort, TargetPort: intstr.FromInt(int(workload.ContainerPort)), Protocol: corev1.ProtocolTCP}}
+	service.Spec.Ports = []corev1.ServicePort{{Port: servicePort, TargetPort: intstr.FromInt(int(containerPort)), Protocol: corev1.ProtocolTCP}}
 
 	return r.Update(ctx, service)
 }
@@ -520,6 +533,7 @@ func (r *AppDeployReconciler) reconcileStatefulSet(ctx context.Context, namespac
 	if workload.Replicas != nil {
 		replicas = *workload.Replicas
 	}
+	containerPort := workloadContainerPort(workload)
 	envFrom := buildEnvFromSources(workload)
 	imagePullSecrets := buildImagePullSecrets(workload)
 	policy := imagePullPolicy(workload)
@@ -532,7 +546,7 @@ func (r *AppDeployReconciler) reconcileStatefulSet(ctx context.Context, namespac
 		serviceName = name
 	}
 
-	if err := r.reconcileHeadlessService(ctx, namespace, serviceName, name, workload.ContainerPort); err != nil {
+	if err := r.reconcileHeadlessService(ctx, namespace, serviceName, name, containerPort); err != nil {
 		return err
 	}
 
@@ -568,7 +582,7 @@ func (r *AppDeployReconciler) reconcileStatefulSet(ctx context.Context, namespac
 								EnvFrom:         envFrom,
 								VolumeMounts:    volumeMounts,
 								Resources:       resources,
-								Ports:           []corev1.ContainerPort{{ContainerPort: workload.ContainerPort, Protocol: corev1.ProtocolTCP}},
+								Ports:           []corev1.ContainerPort{{ContainerPort: containerPort, Protocol: corev1.ProtocolTCP}},
 							},
 						},
 						ImagePullSecrets: imagePullSecrets,
@@ -604,9 +618,89 @@ func (r *AppDeployReconciler) reconcileStatefulSet(ctx context.Context, namespac
 	statefulSet.Spec.Template.Spec.Containers[0].Resources = resources
 	statefulSet.Spec.Template.Spec.ImagePullSecrets = imagePullSecrets
 	statefulSet.Spec.Template.Spec.Volumes = volumes
-	statefulSet.Spec.Template.Spec.Containers[0].Ports = []corev1.ContainerPort{{ContainerPort: workload.ContainerPort, Protocol: corev1.ProtocolTCP}}
+	statefulSet.Spec.Template.Spec.Containers[0].Ports = []corev1.ContainerPort{{ContainerPort: containerPort, Protocol: corev1.ProtocolTCP}}
 
 	return r.Update(ctx, statefulSet)
+}
+
+func (r *AppDeployReconciler) reconcileJob(ctx context.Context, namespace string, workload *appdeployv1alpha1.AppDeployWorkload) error {
+	name := workload.Name
+	backoffLimit := int32(6)
+	if workload.BackoffLimit != nil {
+		backoffLimit = *workload.BackoffLimit
+	}
+	envFrom := buildEnvFromSources(workload)
+	imagePullSecrets := buildImagePullSecrets(workload)
+	policy := imagePullPolicy(workload)
+	volumeMounts := buildVolumeMounts(workload)
+	volumes := buildVolumes(workload)
+	resources := workload.Resources
+
+	job := &batchv1.Job{}
+	key := client.ObjectKey{Name: name, Namespace: namespace}
+	err := r.Get(ctx, key, job)
+	if apierrors.IsNotFound(err) {
+		job = &batchv1.Job{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      name,
+				Namespace: namespace,
+			},
+			Spec: batchv1.JobSpec{
+				BackoffLimit:            &backoffLimit,
+				TTLSecondsAfterFinished: workload.TTLSecondsAfterFinished,
+				Template: corev1.PodTemplateSpec{
+					ObjectMeta: metav1.ObjectMeta{
+						Labels: map[string]string{
+							"appdeploy.appdeploy.io/workload": name,
+						},
+					},
+					Spec: corev1.PodSpec{
+						RestartPolicy:    corev1.RestartPolicyOnFailure,
+						ImagePullSecrets: imagePullSecrets,
+						Volumes:          volumes,
+						Containers: []corev1.Container{
+							{
+								Name:            name,
+								Image:           workload.Image,
+								ImagePullPolicy: policy,
+								Command:         workload.Command,
+								Args:            workload.Args,
+								EnvFrom:         envFrom,
+								VolumeMounts:    volumeMounts,
+								Resources:       resources,
+							},
+						},
+					},
+				},
+			},
+		}
+		return r.Create(ctx, job)
+	}
+	if err != nil {
+		return err
+	}
+
+	job.Spec.BackoffLimit = &backoffLimit
+	job.Spec.TTLSecondsAfterFinished = workload.TTLSecondsAfterFinished
+	job.Spec.Template.Labels = map[string]string{
+		"appdeploy.appdeploy.io/workload": name,
+	}
+	if len(job.Spec.Template.Spec.Containers) == 0 {
+		job.Spec.Template.Spec.Containers = []corev1.Container{{Name: name}}
+	}
+	job.Spec.Template.Spec.RestartPolicy = corev1.RestartPolicyOnFailure
+	job.Spec.Template.Spec.ImagePullSecrets = imagePullSecrets
+	job.Spec.Template.Spec.Volumes = volumes
+	job.Spec.Template.Spec.Containers[0].Name = name
+	job.Spec.Template.Spec.Containers[0].Image = workload.Image
+	job.Spec.Template.Spec.Containers[0].ImagePullPolicy = policy
+	job.Spec.Template.Spec.Containers[0].Command = workload.Command
+	job.Spec.Template.Spec.Containers[0].Args = workload.Args
+	job.Spec.Template.Spec.Containers[0].EnvFrom = envFrom
+	job.Spec.Template.Spec.Containers[0].VolumeMounts = volumeMounts
+	job.Spec.Template.Spec.Containers[0].Resources = resources
+
+	return r.Update(ctx, job)
 }
 
 func (r *AppDeployReconciler) reconcileHeadlessService(ctx context.Context, namespace, serviceName, workloadName string, containerPort int32) error {
@@ -640,6 +734,13 @@ func (r *AppDeployReconciler) reconcileHeadlessService(ctx context.Context, name
 	service.Spec.Ports = []corev1.ServicePort{{Port: containerPort, TargetPort: intstr.FromInt(int(containerPort)), Protocol: corev1.ProtocolTCP}}
 
 	return r.Update(ctx, service)
+}
+
+func workloadContainerPort(workload *appdeployv1alpha1.AppDeployWorkload) int32 {
+	if workload.ContainerPort == nil {
+		return 0
+	}
+	return *workload.ContainerPort
 }
 
 func (r *AppDeployReconciler) reconcileIngress(ctx context.Context, namespace string, ingress *appdeployv1alpha1.AppDeployIngress) error {

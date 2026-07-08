@@ -22,12 +22,14 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/utils/ptr"
 
 	appdeployv1alpha1 "github.com/ude-p/appdeploy/api/v1alpha1"
 )
@@ -62,7 +64,7 @@ var _ = Describe("AppDeploy Controller", func() {
 							{
 								Name:          "app",
 								Image:         "example.com/app-image:tag",
-								ContainerPort: 8090,
+								ContainerPort: ptr.To[int32](8090),
 								ServiceType:   string(corev1.ServiceTypeClusterIP),
 							},
 						},
@@ -228,7 +230,7 @@ var _ = Describe("AppDeploy Controller", func() {
 								Name:                "db",
 								Kind:                "StatefulSet",
 								Image:               "example.com/db-image:tag",
-								ContainerPort:       5432,
+								ContainerPort:       ptr.To[int32](5432),
 								HeadlessServiceName: "db-headless",
 							},
 						},
@@ -272,6 +274,79 @@ var _ = Describe("AppDeploy Controller", func() {
 			Expect(headlessService.Spec.ClusterIP).To(Equal(corev1.ClusterIPNone))
 			Expect(headlessService.Spec.Ports).To(HaveLen(1))
 			Expect(headlessService.Spec.Ports[0].Port).To(Equal(int32(5432)))
+		})
+	})
+
+	Context("When reconciling a Job workload", func() {
+		const (
+			resourceName      = "job-resource"
+			resourceNamespace = "default"
+		)
+
+		ctx := context.Background()
+
+		typeNamespacedName := types.NamespacedName{
+			Name:      resourceName,
+			Namespace: resourceNamespace,
+		}
+		appdeploy := &appdeployv1alpha1.AppDeploy{}
+
+		BeforeEach(func() {
+			By("creating the custom resource for the Kind AppDeploy")
+			err := k8sClient.Get(ctx, typeNamespacedName, appdeploy)
+			if err != nil && errors.IsNotFound(err) {
+				resource := &appdeployv1alpha1.AppDeploy{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      resourceName,
+						Namespace: resourceNamespace,
+					},
+					Spec: appdeployv1alpha1.AppDeploySpec{
+						Namespaces: []string{resourceNamespace},
+						Workloads: []appdeployv1alpha1.AppDeployWorkload{
+							{
+								Name:                    "db-init",
+								Kind:                    "Job",
+								Image:                   "postgres:17",
+								Command:                 []string{"sh", "-c"},
+								Args:                    []string{"echo ok"},
+								BackoffLimit:            ptr.To[int32](3),
+								TTLSecondsAfterFinished: ptr.To[int32](60),
+							},
+						},
+					},
+				}
+				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
+			}
+		})
+
+		AfterEach(func() {
+			resource := &appdeployv1alpha1.AppDeploy{}
+			err := k8sClient.Get(ctx, typeNamespacedName, resource)
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Cleanup the specific resource instance AppDeploy")
+			Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
+		})
+
+		It("should successfully reconcile the Job workload", func() {
+			By("Reconciling the created resource")
+			controllerReconciler := &AppDeployReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			job := &batchv1.Job{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "db-init", Namespace: resourceNamespace}, job)).To(Succeed())
+			Expect(job.Spec.BackoffLimit).NotTo(BeNil())
+			Expect(*job.Spec.BackoffLimit).To(Equal(int32(3)))
+			Expect(job.Spec.Template.Spec.Containers).To(HaveLen(1))
+			Expect(job.Spec.Template.Spec.Containers[0].Command).To(Equal([]string{"sh", "-c"}))
+			Expect(job.Spec.Template.Spec.Containers[0].Args).To(Equal([]string{"echo ok"}))
 		})
 	})
 })
