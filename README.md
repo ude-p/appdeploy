@@ -1,135 +1,114 @@
 # appdeploy
-// TODO(user): Add simple overview of use/purpose
 
-## Description
-// TODO(user): An in-depth paragraph about your project and overview of use
+`appdeploy` is a Kubernetes operator for declaring an application stack from one custom resource.
 
-## Getting Started
+## What it does
 
-### Prerequisites
-- go version v1.24.6+
-- docker version 17.03+.
-- kubectl version v1.11.3+.
-- Access to a Kubernetes v1.11.3+ cluster.
+From a single `AppDeploy` resource, the controller can create:
 
-### To Deploy on the cluster
-**Build and push your image to the location specified by `IMG`:**
+- `ConfigMap` objects
+- `ExternalSecret` objects for ESO
+- `Deployment` objects
+- `StatefulSet` objects with headless services
+- `Service` objects
+- `Ingress` objects
+
+It also wires pod fields like:
+
+- `envFromConfig`
+- `envFromSecrets`
+- `imagePullSecrets`
+- `imagePullPolicy`
+- `resources`
+- `volumeMounts`
+
+## CRD Shape
+
+Current API version: `deploy.ude/v1alpha1`
+
+Top-level spec fields:
+
+- `namespaces`: required target namespaces
+- `selectedNamespaces`: optional subset of `namespaces`
+- `configMaps`: config maps to create
+- `secrets`: ESO-backed secrets to fan out
+- `workloads`: deployments or stateful sets to create
+- `ingresses`: ingress resources to create
+
+### ConfigMaps
+
+- `name`: required
+- `scope`: optional
+- `data`: key/value data
+
+An empty `scope` means the config map is created in every selected namespace.
+
+### Secrets
+
+- `name`: required
+- `type`: `Opaque` or `ImagePull`
+- `scope`: optional
+- `remoteKey`: Vault path read by ESO
+- `secretStoreName`: ESO store name, defaults to `cluster-vault`
+- `secretStoreKind`: `SecretStore` or `ClusterSecretStore`, defaults to `ClusterSecretStore`
+
+`ImagePull` secrets are rendered as `kubernetes.io/dockerconfigjson` secrets.
+
+### Workloads
+
+- `name`: required
+- `kind`: `Deployment` or `StatefulSet`
+- `scope`: optional
+- `image`: required
+- `replicas`: optional, defaults to `1`
+- `containerPort`: required
+- `resources`: optional
+- `imagePullPolicy`: optional
+- `serviceType`: optional
+- `servicePort`: optional, defaults to `containerPort`
+- `headlessServiceName`: required for `StatefulSet`
+- `envFromConfig`: optional list of ConfigMap names
+- `envFromSecrets`: optional list of Secret names
+- `imagePullSecrets`: optional list of Secret names
+- `volumeMounts`: optional list of mounted ConfigMaps or Secrets
+- `overrides`: raw patch blob for allowlisted fields not modeled in the typed schema
+
+### Ingresses
+
+- `name`: required
+- `scope`: optional
+- `className`: required
+- `host`: required
+- `annotations`: optional
+- `tlsSecretName`: optional
+- `rules`: path/service mappings
+- `overrides`: raw patch blob for allowlisted fields not modeled in the typed schema
+
+## Rules
+
+- `namespaces` must contain at least one entry
+- `selectedNamespaces` must be a subset of `namespaces`
+- duplicate namespaces are rejected
+- duplicate target object names in the same namespace are rejected
+- empty `scope` means “apply to every selected namespace”
+- `StatefulSet` workloads require `headlessServiceName`
+- `volumeMounts` must specify exactly one of `configMapName` or `secretName`
+- `overrides` may only use allowlisted fields and may not collide with schema-managed fields
+
+## Workflow
+
+Examples:
 
 ```sh
-make docker-build docker-push IMG=<some-registry>/appdeploy:tag
+just manifests
+just generate
+just build
+just run
+just test
 ```
-
-**NOTE:** This image ought to be published in the personal registry you specified.
-And it is required to have access to pull the image from the working environment.
-Make sure you have the proper permission to the registry if the above commands don’t work.
-
-**Install the CRDs into the cluster:**
-
-```sh
-make install
-```
-
-**Deploy the Manager to the cluster with the image specified by `IMG`:**
-
-```sh
-make deploy IMG=<some-registry>/appdeploy:tag
-```
-
-> **NOTE**: If you encounter RBAC errors, you may need to grant yourself cluster-admin
-privileges or be logged in as admin.
-
-**Create instances of your solution**
-You can apply the samples (examples) from the config/sample:
-
-```sh
-kubectl apply -k config/samples/
-```
-
->**NOTE**: Ensure that the samples has default values to test it out.
-
-### To Uninstall
-**Delete the instances (CRs) from the cluster:**
-
-```sh
-kubectl delete -k config/samples/
-```
-
-**Delete the APIs(CRDs) from the cluster:**
-
-```sh
-make uninstall
-```
-
-**UnDeploy the controller from the cluster:**
-
-```sh
-make undeploy
-```
-
-## Project Distribution
-
-Following the options to release and provide this solution to the users.
-
-### By providing a bundle with all YAML files
-
-1. Build the installer for the image built and published in the registry:
-
-```sh
-make build-installer IMG=<some-registry>/appdeploy:tag
-```
-
-**NOTE:** The makefile target mentioned above generates an 'install.yaml'
-file in the dist directory. This file contains all the resources built
-with Kustomize, which are necessary to install this project without its
-dependencies.
-
-2. Using the installer
-
-Users can just run 'kubectl apply -f <URL for YAML BUNDLE>' to install
-the project, i.e.:
-
-```sh
-kubectl apply -f https://raw.githubusercontent.com/<org>/appdeploy/<tag or branch>/dist/install.yaml
-```
-
-### By providing a Helm Chart
-
-1. Build the chart using the optional helm plugin
-
-```sh
-kubebuilder edit --plugins=helm/v2-alpha
-```
-
-2. See that a chart was generated under 'dist/chart', and users
-can obtain this solution from there.
-
-**NOTE:** If you change the project, you need to update the Helm Chart
-using the same command above to sync the latest changes. Furthermore,
-if you create webhooks, you need to use the above command with
-the '--force' flag and manually ensure that any custom configuration
-previously added to 'dist/chart/values.yaml' or 'dist/chart/manager/manager.yaml'
-is manually re-applied afterwards.
-
-## Contributing
-// TODO(user): Add detailed information on how you would like others to contribute to this project
-
-**NOTE:** Run `make help` for more information on all potential `make` targets
-
-More information can be found via the [Kubebuilder Documentation](https://book.kubebuilder.io/introduction.html)
 
 ## License
 
 Copyright 2026.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-
+Licensed under the Apache License, Version 2.0.

@@ -1,9 +1,0 @@
-apiVersion: appdeploy.appdeploy.io/v1alpha1
-kind: AppDeploy
-metadata:
-  labels:
-    app.kubernetes.io/name: appdeploy
-    app.kubernetes.io/managed-by: kustomize
-  name: appdeploy-sample
-spec:
-  # TODO(user): Add fields here
