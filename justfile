@@ -1,10 +1,5 @@
 set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
 
-img := "controller:latest"
-localbin := "bin"
-kustomize := "{{localbin}}/kustomize"
-controller_gen := "{{localbin}}/controller-gen"
-golangci_lint := "{{localbin}}/golangci-lint"
 kubectl := "kubectl"
 
 default:
@@ -14,10 +9,10 @@ help:
   @just --list
 
 manifests:
-  "{{controller_gen}}" rbac:roleName=manager-role crd webhook paths="./..." output:crd:artifacts:config=config/crd/bases
+  go run sigs.k8s.io/controller-tools/cmd/controller-gen@v0.21.0 rbac:roleName=manager-role crd webhook paths=./... output:crd:artifacts:config=config/crd/bases
 
 generate:
-  "{{controller_gen}}" object:paths="./..."
+  go run sigs.k8s.io/controller-tools/cmd/controller-gen@v0.21.0 object paths=./...
 
 fmt:
   go fmt ./...
@@ -34,28 +29,18 @@ build:
 run:
   go run ./cmd/main.go
 
-lint:
-  "{{golangci_lint}}" run
-
-lint-fix:
-  "{{golangci_lint}}" run --fix
-
 build-installer:
   mkdir -p dist
-  cd config/manager && "{{kustomize}}" edit set image controller={{img}}
-  "{{kustomize}}" build config/default > dist/install.yaml
+  "{{kubectl}}" kustomize config/default > dist/install.yaml
 
 install:
-  out="$({{kustomize}} build config/crd 2>/dev/null || true)"; \
-  if [ -n "$out" ]; then echo "$out" | "{{kubectl}}" apply -f -; else echo "No CRDs to install; skipping."; fi
+  "{{kubectl}}" apply -k config/crd
 
 uninstall:
-  out="$({{kustomize}} build config/crd 2>/dev/null || true)"; \
-  if [ -n "$out" ]; then echo "$out" | "{{kubectl}}" delete --ignore-not-found=false -f -; else echo "No CRDs to delete; skipping."; fi
+  "{{kubectl}}" delete --ignore-not-found=false -k config/crd
 
 deploy:
-  cd config/manager && "{{kustomize}}" edit set image controller={{img}}
-  "{{kustomize}}" build config/default | "{{kubectl}}" apply -f -
+  "{{kubectl}}" apply -k config/default
 
 undeploy:
-  "{{kustomize}}" build config/default | "{{kubectl}}" delete --ignore-not-found=false -f -
+  "{{kubectl}}" delete --ignore-not-found=false -k config/default
