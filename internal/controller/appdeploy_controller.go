@@ -20,11 +20,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -36,10 +38,10 @@ import (
 	appdeployv1alpha1 "github.com/ude-p/appdeploy/api/v1alpha1"
 )
 
-// AppDeployReconciler reconciles a AppDeploy object
 type AppDeployReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
+	Scheme     *runtime.Scheme
+	RESTMapper meta.RESTMapper
 }
 
 var deploymentOverrideAllowlist = map[string]struct{}{
@@ -60,23 +62,28 @@ var ingressOverrideAllowlist = map[string]struct{}{
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=external-secrets.io,resources=externalsecrets,verbs=get;list;watch;create;update;patch;delete
 
-// Reconcile is part of the main kubernetes reconciliation loop which aims to
-// move the current state of the cluster closer to the desired state.
-// TODO(user): Modify the Reconcile function to compare the state specified by
-// the AppDeploy object against the actual cluster state, and then
-// perform operations to make the cluster state reflect the state specified by
-// the user.
-//
-// For more details, check Reconcile and its Result here:
-// - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.24.1/pkg/reconcile
-func (r *AppDeployReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+func (r *AppDeployReconciler) Reconcile(ctx context.Context, req ctrl.Request) (result ctrl.Result, err error) {
 	var appdeploy appdeployv1alpha1.AppDeploy
 	if err := r.Get(ctx, req.NamespacedName, &appdeploy); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	if err := r.validate(&appdeploy); err != nil {
+	defer func() {
+		if statusErr := r.updateStatus(ctx, &appdeploy, err); statusErr != nil && err == nil {
+			err = statusErr
+		}
+	}()
+
+	if validateErr := r.validate(&appdeploy); validateErr != nil {
+		err = validateErr
 		return ctrl.Result{}, err
+	}
+
+	if len(appdeploy.Spec.Secrets) > 0 {
+		if esoErr := r.ensureESOConfigured(); esoErr != nil {
+			err = esoErr
+			return ctrl.Result{}, err
+		}
 	}
 
 	targetNamespaces := appdeploy.Spec.Namespaces
@@ -90,7 +97,8 @@ func (r *AppDeployReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			if configMap.Scope != "" && configMap.Scope != namespace {
 				continue
 			}
-			if err := r.reconcileConfigMap(ctx, namespace, &configMap); err != nil {
+			if configMapErr := r.reconcileConfigMap(ctx, namespace, &configMap); configMapErr != nil {
+				err = configMapErr
 				return ctrl.Result{}, err
 			}
 		}
@@ -100,7 +108,8 @@ func (r *AppDeployReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			if secret.Scope != "" && secret.Scope != namespace {
 				continue
 			}
-			if err := r.reconcileExternalSecret(ctx, namespace, &secret); err != nil {
+			if secretErr := r.reconcileExternalSecret(ctx, namespace, &secret); secretErr != nil {
+				err = secretErr
 				return ctrl.Result{}, err
 			}
 		}
@@ -112,17 +121,21 @@ func (r *AppDeployReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			}
 			switch workload.Kind {
 			case "", "Deployment":
-				if err := r.reconcileDeployment(ctx, namespace, &workload); err != nil {
+				if deploymentErr := r.reconcileDeployment(ctx, namespace, &workload); deploymentErr != nil {
+					err = deploymentErr
 					return ctrl.Result{}, err
 				}
 			case "StatefulSet":
-				if err := r.reconcileStatefulSet(ctx, namespace, &workload); err != nil {
+				if statefulSetErr := r.reconcileStatefulSet(ctx, namespace, &workload); statefulSetErr != nil {
+					err = statefulSetErr
 					return ctrl.Result{}, err
 				}
 			default:
-				return ctrl.Result{}, fmt.Errorf("spec.workloads[%d].kind %q is not supported", i, workload.Kind)
+				err = fmt.Errorf("spec.workloads[%d].kind %q is not supported", i, workload.Kind)
+				return ctrl.Result{}, err
 			}
-			if err := r.reconcileService(ctx, namespace, &workload); err != nil {
+			if serviceErr := r.reconcileService(ctx, namespace, &workload); serviceErr != nil {
+				err = serviceErr
 				return ctrl.Result{}, err
 			}
 		}
@@ -132,7 +145,8 @@ func (r *AppDeployReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			if ingress.Scope != "" && ingress.Scope != namespace {
 				continue
 			}
-			if err := r.reconcileIngress(ctx, namespace, &ingress); err != nil {
+			if ingressErr := r.reconcileIngress(ctx, namespace, &ingress); ingressErr != nil {
+				err = ingressErr
 				return ctrl.Result{}, err
 			}
 		}
@@ -213,6 +227,76 @@ func (r *AppDeployReconciler) validate(appdeploy *appdeployv1alpha1.AppDeploy) e
 		}
 	}
 	return nil
+}
+
+func (r *AppDeployReconciler) ensureESOConfigured() error {
+	if r.RESTMapper == nil {
+		return fmt.Errorf("external secrets operator is not configured: rest mapper is unavailable")
+	}
+
+	_, err := r.RESTMapper.RESTMapping(schema.GroupKind{Group: "external-secrets.io", Kind: "ExternalSecret"}, "v1beta1")
+	if err != nil {
+		return fmt.Errorf("external secrets operator is not configured: %w", err)
+	}
+
+	return nil
+}
+
+func (r *AppDeployReconciler) updateStatus(ctx context.Context, appdeploy *appdeployv1alpha1.AppDeploy, reconcileErr error) error {
+	now := metav1.Now()
+	readyCondition := metav1.Condition{
+		Type:               "Ready",
+		ObservedGeneration: appdeploy.Generation,
+		LastTransitionTime: now,
+	}
+	degradedCondition := metav1.Condition{
+		Type:               "Degraded",
+		ObservedGeneration: appdeploy.Generation,
+		LastTransitionTime: now,
+	}
+
+	if reconcileErr != nil {
+		readyCondition.Status = metav1.ConditionFalse
+		readyCondition.Reason = statusReasonForError(reconcileErr)
+		readyCondition.Message = reconcileErr.Error()
+		degradedCondition.Status = metav1.ConditionTrue
+		degradedCondition.Reason = statusReasonForError(reconcileErr)
+		degradedCondition.Message = reconcileErr.Error()
+	} else {
+		readyCondition.Status = metav1.ConditionTrue
+		readyCondition.Reason = "Reconciled"
+		readyCondition.Message = "All desired resources were reconciled"
+		degradedCondition.Status = metav1.ConditionFalse
+		degradedCondition.Reason = "Reconciled"
+		degradedCondition.Message = "All desired resources were reconciled"
+	}
+
+	appdeploy.Status.Conditions = upsertCondition(appdeploy.Status.Conditions, readyCondition)
+	appdeploy.Status.Conditions = upsertCondition(appdeploy.Status.Conditions, degradedCondition)
+
+	return r.Status().Update(ctx, appdeploy)
+}
+
+func statusReasonForError(err error) string {
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "external secrets operator is not configured"):
+		return "ESOUnavailable"
+	case strings.HasPrefix(msg, "spec."):
+		return "ValidationFailed"
+	default:
+		return "ReconcileFailed"
+	}
+}
+
+func upsertCondition(conditions []metav1.Condition, condition metav1.Condition) []metav1.Condition {
+	for i := range conditions {
+		if conditions[i].Type == condition.Type {
+			conditions[i] = condition
+			return conditions
+		}
+	}
+	return append(conditions, condition)
 }
 
 func (r *AppDeployReconciler) reconcileConfigMap(ctx context.Context, namespace string, configMap *appdeployv1alpha1.AppDeployConfigMap) error {
@@ -342,25 +426,20 @@ func (r *AppDeployReconciler) reconcileDeployment(ctx context.Context, namespace
 								EnvFrom:         envFrom,
 								VolumeMounts:    volumeMounts,
 								Resources:       resources,
-								Ports: []corev1.ContainerPort{
-									{
-										ContainerPort: workload.ContainerPort,
-										Protocol:      corev1.ProtocolTCP,
-									},
-								},
+								Ports:           []corev1.ContainerPort{{ContainerPort: workload.ContainerPort, Protocol: corev1.ProtocolTCP}},
 							},
 						},
 						ImagePullSecrets: imagePullSecrets,
 						Volumes:          volumes,
 					},
 				},
-				},
-			}
-			if err := applyDeploymentOverrides(deployment, workload.Overrides.Raw); err != nil {
-				return err
-			}
-			return r.Create(ctx, deployment)
+			},
 		}
+		if err := applyDeploymentOverrides(deployment, workload.Overrides.Raw); err != nil {
+			return err
+		}
+		return r.Create(ctx, deployment)
+	}
 	if err != nil {
 		return err
 	}
@@ -388,12 +467,7 @@ func (r *AppDeployReconciler) reconcileDeployment(ctx context.Context, namespace
 	if err := applyDeploymentOverrides(deployment, workload.Overrides.Raw); err != nil {
 		return err
 	}
-	deployment.Spec.Template.Spec.Containers[0].Ports = []corev1.ContainerPort{
-		{
-			ContainerPort: workload.ContainerPort,
-			Protocol:      corev1.ProtocolTCP,
-		},
-	}
+	deployment.Spec.Template.Spec.Containers[0].Ports = []corev1.ContainerPort{{ContainerPort: workload.ContainerPort, Protocol: corev1.ProtocolTCP}}
 
 	return r.Update(ctx, deployment)
 }
@@ -422,13 +496,7 @@ func (r *AppDeployReconciler) reconcileService(ctx context.Context, namespace st
 				Selector: map[string]string{
 					"appdeploy.appdeploy.io/workload": workload.Name,
 				},
-				Ports: []corev1.ServicePort{
-					{
-						Port:       servicePort,
-						TargetPort: intstr.FromInt(int(workload.ContainerPort)),
-						Protocol:   corev1.ProtocolTCP,
-					},
-				},
+				Ports: []corev1.ServicePort{{Port: servicePort, TargetPort: intstr.FromInt(int(workload.ContainerPort)), Protocol: corev1.ProtocolTCP}},
 			},
 		}
 		return r.Create(ctx, service)
@@ -441,13 +509,7 @@ func (r *AppDeployReconciler) reconcileService(ctx context.Context, namespace st
 	service.Spec.Selector = map[string]string{
 		"appdeploy.appdeploy.io/workload": workload.Name,
 	}
-	service.Spec.Ports = []corev1.ServicePort{
-		{
-			Port:       servicePort,
-			TargetPort: intstr.FromInt(int(workload.ContainerPort)),
-			Protocol:   corev1.ProtocolTCP,
-		},
-	}
+	service.Spec.Ports = []corev1.ServicePort{{Port: servicePort, TargetPort: intstr.FromInt(int(workload.ContainerPort)), Protocol: corev1.ProtocolTCP}}
 
 	return r.Update(ctx, service)
 }
@@ -506,12 +568,7 @@ func (r *AppDeployReconciler) reconcileStatefulSet(ctx context.Context, namespac
 								EnvFrom:         envFrom,
 								VolumeMounts:    volumeMounts,
 								Resources:       resources,
-								Ports: []corev1.ContainerPort{
-									{
-										ContainerPort: workload.ContainerPort,
-										Protocol:      corev1.ProtocolTCP,
-									},
-								},
+								Ports:           []corev1.ContainerPort{{ContainerPort: workload.ContainerPort, Protocol: corev1.ProtocolTCP}},
 							},
 						},
 						ImagePullSecrets: imagePullSecrets,
@@ -547,12 +604,7 @@ func (r *AppDeployReconciler) reconcileStatefulSet(ctx context.Context, namespac
 	statefulSet.Spec.Template.Spec.Containers[0].Resources = resources
 	statefulSet.Spec.Template.Spec.ImagePullSecrets = imagePullSecrets
 	statefulSet.Spec.Template.Spec.Volumes = volumes
-	statefulSet.Spec.Template.Spec.Containers[0].Ports = []corev1.ContainerPort{
-		{
-			ContainerPort: workload.ContainerPort,
-			Protocol:      corev1.ProtocolTCP,
-		},
-	}
+	statefulSet.Spec.Template.Spec.Containers[0].Ports = []corev1.ContainerPort{{ContainerPort: workload.ContainerPort, Protocol: corev1.ProtocolTCP}}
 
 	return r.Update(ctx, statefulSet)
 }
@@ -572,13 +624,7 @@ func (r *AppDeployReconciler) reconcileHeadlessService(ctx context.Context, name
 				Selector: map[string]string{
 					"appdeploy.appdeploy.io/workload": workloadName,
 				},
-				Ports: []corev1.ServicePort{
-					{
-						Port:       containerPort,
-						TargetPort: intstr.FromInt(int(containerPort)),
-						Protocol:   corev1.ProtocolTCP,
-					},
-				},
+				Ports: []corev1.ServicePort{{Port: containerPort, TargetPort: intstr.FromInt(int(containerPort)), Protocol: corev1.ProtocolTCP}},
 			},
 		}
 		return r.Create(ctx, service)
@@ -591,13 +637,7 @@ func (r *AppDeployReconciler) reconcileHeadlessService(ctx context.Context, name
 	service.Spec.Selector = map[string]string{
 		"appdeploy.appdeploy.io/workload": workloadName,
 	}
-	service.Spec.Ports = []corev1.ServicePort{
-		{
-			Port:       containerPort,
-			TargetPort: intstr.FromInt(int(containerPort)),
-			Protocol:   corev1.ProtocolTCP,
-		},
-	}
+	service.Spec.Ports = []corev1.ServicePort{{Port: containerPort, TargetPort: intstr.FromInt(int(containerPort)), Protocol: corev1.ProtocolTCP}}
 
 	return r.Update(ctx, service)
 }
@@ -618,19 +658,19 @@ func (r *AppDeployReconciler) reconcileIngress(ctx context.Context, namespace st
 				Rules:            buildIngressRules(ingress),
 			},
 		}
-			if ingress.TLSSecretName != "" {
-				ing.Spec.TLS = []networkingv1.IngressTLS{
-					{
-						SecretName: ingress.TLSSecretName,
-						Hosts:      []string{ingress.Host},
-					},
-				}
+		if ingress.TLSSecretName != "" {
+			ing.Spec.TLS = []networkingv1.IngressTLS{
+				{
+					SecretName: ingress.TLSSecretName,
+					Hosts:      []string{ingress.Host},
+				},
 			}
-			if err := applyIngressOverrides(ing, ingress.Overrides.Raw); err != nil {
-				return err
-			}
-			return r.Create(ctx, ing)
 		}
+		if err := applyIngressOverrides(ing, ingress.Overrides.Raw); err != nil {
+			return err
+		}
+		return r.Create(ctx, ing)
+	}
 	if err != nil {
 		return err
 	}
@@ -665,11 +705,7 @@ func buildIngressRules(ingress *appdeployv1alpha1.AppDeployIngress) []networking
 			Backend: networkingv1.IngressBackend{
 				Service: &networkingv1.IngressServiceBackend{
 					Name: rule.ServiceName,
-					Port: networkingv1.ServiceBackendPort{
-						Name:   "",
-						Number: 0,
-						// set below
-					},
+					Port: networkingv1.ServiceBackendPort{},
 				},
 			},
 		})
@@ -695,7 +731,6 @@ func buildIngressRules(ingress *appdeployv1alpha1.AppDeployIngress) []networking
 	return rules
 }
 
-//go:fix inline
 func pathTypePtr(pathType networkingv1.PathType) *networkingv1.PathType {
 	return new(pathType)
 }
@@ -856,7 +891,6 @@ func applyIngressOverrides(ingress *networkingv1.Ingress, raw []byte) error {
 	return nil
 }
 
-// SetupWithManager sets up the controller with the Manager.
 func (r *AppDeployReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&appdeployv1alpha1.AppDeploy{}).
