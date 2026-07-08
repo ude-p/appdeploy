@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -25,7 +26,9 @@ import (
 	networkingv1 "k8s.io/api/networking/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -39,9 +42,23 @@ type AppDeployReconciler struct {
 	Scheme *runtime.Scheme
 }
 
+var deploymentOverrideAllowlist = map[string]struct{}{
+	"metadata.annotations":               {},
+	"metadata.labels":                    {},
+	"spec.strategy":                      {},
+	"spec.template.metadata.annotations": {},
+	"spec.template.spec.securityContext": {},
+}
+
+var ingressOverrideAllowlist = map[string]struct{}{
+	"metadata.labels": {},
+}
+
 // +kubebuilder:rbac:groups=appdeploy.appdeploy.io,resources=appdeploys,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=appdeploy.appdeploy.io,resources=appdeploys/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=appdeploy.appdeploy.io,resources=appdeploys/finalizers,verbs=update
+// +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=external-secrets.io,resources=externalsecrets,verbs=get;list;watch;create;update;patch;delete
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -68,6 +85,26 @@ func (r *AppDeployReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 
 	for _, namespace := range targetNamespaces {
+		for i := range appdeploy.Spec.ConfigMaps {
+			configMap := appdeploy.Spec.ConfigMaps[i]
+			if configMap.Scope != "" && configMap.Scope != namespace {
+				continue
+			}
+			if err := r.reconcileConfigMap(ctx, namespace, &configMap); err != nil {
+				return ctrl.Result{}, err
+			}
+		}
+
+		for i := range appdeploy.Spec.Secrets {
+			secret := appdeploy.Spec.Secrets[i]
+			if secret.Scope != "" && secret.Scope != namespace {
+				continue
+			}
+			if err := r.reconcileExternalSecret(ctx, namespace, &secret); err != nil {
+				return ctrl.Result{}, err
+			}
+		}
+
 		for i := range appdeploy.Spec.Workloads {
 			workload := appdeploy.Spec.Workloads[i]
 			if workload.Scope != "" && workload.Scope != namespace {
@@ -75,11 +112,11 @@ func (r *AppDeployReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			}
 			switch workload.Kind {
 			case "", "Deployment":
-				if err := r.reconcileDeployment(ctx, &appdeploy, namespace, &workload); err != nil {
+				if err := r.reconcileDeployment(ctx, namespace, &workload); err != nil {
 					return ctrl.Result{}, err
 				}
 			case "StatefulSet":
-				if err := r.reconcileStatefulSet(ctx, &appdeploy, namespace, &workload); err != nil {
+				if err := r.reconcileStatefulSet(ctx, namespace, &workload); err != nil {
 					return ctrl.Result{}, err
 				}
 			default:
@@ -137,6 +174,35 @@ func (r *AppDeployReconciler) validate(appdeploy *appdeployv1alpha1.AppDeploy) e
 		if workload.Kind == "StatefulSet" && workload.HeadlessServiceName == "" {
 			return fmt.Errorf("spec.workloads[%d].headlessServiceName must be set when kind is StatefulSet", i)
 		}
+		for j, volumeMount := range workload.VolumeMounts {
+			if volumeMount.ConfigMapName == "" && volumeMount.SecretName == "" {
+				return fmt.Errorf("spec.workloads[%d].volumeMounts[%d] must set configMapName or secretName", i, j)
+			}
+			if volumeMount.ConfigMapName != "" && volumeMount.SecretName != "" {
+				return fmt.Errorf("spec.workloads[%d].volumeMounts[%d] must not set both configMapName and secretName", i, j)
+			}
+		}
+	}
+
+	for i, configMap := range appdeploy.Spec.ConfigMaps {
+		if configMap.Scope != "" {
+			if _, ok := namespaceSet[configMap.Scope]; !ok {
+				return fmt.Errorf("spec.configMaps[%d].scope %q must match one of spec.namespaces", i, configMap.Scope)
+			}
+		}
+	}
+
+	for i, secret := range appdeploy.Spec.Secrets {
+		if secret.Scope != "" {
+			if _, ok := namespaceSet[secret.Scope]; !ok {
+				return fmt.Errorf("spec.secrets[%d].scope %q must match one of spec.namespaces", i, secret.Scope)
+			}
+		}
+		switch secret.SecretStoreKind {
+		case "SecretStore", "ClusterSecretStore":
+		default:
+			return fmt.Errorf("spec.secrets[%d].secretStoreKind %q is not supported", i, secret.SecretStoreKind)
+		}
 	}
 
 	for i, ingress := range appdeploy.Spec.Ingresses {
@@ -149,12 +215,100 @@ func (r *AppDeployReconciler) validate(appdeploy *appdeployv1alpha1.AppDeploy) e
 	return nil
 }
 
-func (r *AppDeployReconciler) reconcileDeployment(ctx context.Context, appdeploy *appdeployv1alpha1.AppDeploy, namespace string, workload *appdeployv1alpha1.AppDeployWorkload) error {
+func (r *AppDeployReconciler) reconcileConfigMap(ctx context.Context, namespace string, configMap *appdeployv1alpha1.AppDeployConfigMap) error {
+	cm := &corev1.ConfigMap{}
+	key := client.ObjectKey{Name: configMap.Name, Namespace: namespace}
+	err := r.Get(ctx, key, cm)
+	if apierrors.IsNotFound(err) {
+		cm = &corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      configMap.Name,
+				Namespace: namespace,
+			},
+			Data: configMap.Data,
+		}
+		return r.Create(ctx, cm)
+	}
+	if err != nil {
+		return err
+	}
+
+	cm.Data = configMap.Data
+
+	return r.Update(ctx, cm)
+}
+
+func (r *AppDeployReconciler) reconcileExternalSecret(ctx context.Context, namespace string, secret *appdeployv1alpha1.AppDeploySecret) error {
+	gvk := schema.GroupVersionKind{
+		Group:   "external-secrets.io",
+		Version: "v1beta1",
+		Kind:    "ExternalSecret",
+	}
+
+	targetType := "Opaque"
+	if secret.Type == "ImagePull" {
+		targetType = "kubernetes.io/dockerconfigjson"
+	}
+
+	externalSecret := &unstructured.Unstructured{
+		Object: map[string]any{
+			"apiVersion": "external-secrets.io/v1beta1",
+			"kind":       "ExternalSecret",
+			"metadata": map[string]any{
+				"name":      secret.Name,
+				"namespace": namespace,
+			},
+			"spec": map[string]any{
+				"secretStoreRef": map[string]any{
+					"name": secret.SecretStoreName,
+					"kind": secret.SecretStoreKind,
+				},
+				"target": map[string]any{
+					"name":           secret.Name,
+					"creationPolicy": "Owner",
+					"template": map[string]any{
+						"type": targetType,
+					},
+				},
+				"dataFrom": []any{
+					map[string]any{
+						"extract": map[string]any{
+							"key": secret.RemoteKey,
+						},
+					},
+				},
+			},
+		},
+	}
+	externalSecret.SetGroupVersionKind(gvk)
+
+	key := client.ObjectKey{Name: secret.Name, Namespace: namespace}
+	current := &unstructured.Unstructured{}
+	current.SetGroupVersionKind(gvk)
+	err := r.Get(ctx, key, current)
+	if apierrors.IsNotFound(err) {
+		return r.Create(ctx, externalSecret)
+	}
+	if err != nil {
+		return err
+	}
+
+	current.Object["spec"] = externalSecret.Object["spec"]
+	return r.Update(ctx, current)
+}
+
+func (r *AppDeployReconciler) reconcileDeployment(ctx context.Context, namespace string, workload *appdeployv1alpha1.AppDeployWorkload) error {
 	name := workload.Name
 	replicas := int32(1)
 	if workload.Replicas != nil {
 		replicas = *workload.Replicas
 	}
+	envFrom := buildEnvFromSources(workload)
+	imagePullSecrets := buildImagePullSecrets(workload)
+	policy := imagePullPolicy(workload)
+	volumeMounts := buildVolumeMounts(workload)
+	volumes := buildVolumes(workload)
+	resources := workload.Resources
 
 	deployment := &appsv1.Deployment{}
 	key := client.ObjectKey{Name: name, Namespace: namespace}
@@ -182,8 +336,12 @@ func (r *AppDeployReconciler) reconcileDeployment(ctx context.Context, appdeploy
 					Spec: corev1.PodSpec{
 						Containers: []corev1.Container{
 							{
-								Name:  name,
-								Image: workload.Image,
+								Name:            name,
+								Image:           workload.Image,
+								ImagePullPolicy: policy,
+								EnvFrom:         envFrom,
+								VolumeMounts:    volumeMounts,
+								Resources:       resources,
 								Ports: []corev1.ContainerPort{
 									{
 										ContainerPort: workload.ContainerPort,
@@ -192,12 +350,17 @@ func (r *AppDeployReconciler) reconcileDeployment(ctx context.Context, appdeploy
 								},
 							},
 						},
+						ImagePullSecrets: imagePullSecrets,
+						Volumes:          volumes,
 					},
 				},
-			},
+				},
+			}
+			if err := applyDeploymentOverrides(deployment, workload.Overrides.Raw); err != nil {
+				return err
+			}
+			return r.Create(ctx, deployment)
 		}
-		return r.Create(ctx, deployment)
-	}
 	if err != nil {
 		return err
 	}
@@ -216,6 +379,15 @@ func (r *AppDeployReconciler) reconcileDeployment(ctx context.Context, appdeploy
 	}
 	deployment.Spec.Template.Spec.Containers[0].Name = name
 	deployment.Spec.Template.Spec.Containers[0].Image = workload.Image
+	deployment.Spec.Template.Spec.Containers[0].ImagePullPolicy = policy
+	deployment.Spec.Template.Spec.Containers[0].EnvFrom = envFrom
+	deployment.Spec.Template.Spec.Containers[0].VolumeMounts = volumeMounts
+	deployment.Spec.Template.Spec.Containers[0].Resources = resources
+	deployment.Spec.Template.Spec.ImagePullSecrets = imagePullSecrets
+	deployment.Spec.Template.Spec.Volumes = volumes
+	if err := applyDeploymentOverrides(deployment, workload.Overrides.Raw); err != nil {
+		return err
+	}
 	deployment.Spec.Template.Spec.Containers[0].Ports = []corev1.ContainerPort{
 		{
 			ContainerPort: workload.ContainerPort,
@@ -280,12 +452,18 @@ func (r *AppDeployReconciler) reconcileService(ctx context.Context, namespace st
 	return r.Update(ctx, service)
 }
 
-func (r *AppDeployReconciler) reconcileStatefulSet(ctx context.Context, appdeploy *appdeployv1alpha1.AppDeploy, namespace string, workload *appdeployv1alpha1.AppDeployWorkload) error {
+func (r *AppDeployReconciler) reconcileStatefulSet(ctx context.Context, namespace string, workload *appdeployv1alpha1.AppDeployWorkload) error {
 	name := workload.Name
 	replicas := int32(1)
 	if workload.Replicas != nil {
 		replicas = *workload.Replicas
 	}
+	envFrom := buildEnvFromSources(workload)
+	imagePullSecrets := buildImagePullSecrets(workload)
+	policy := imagePullPolicy(workload)
+	volumeMounts := buildVolumeMounts(workload)
+	volumes := buildVolumes(workload)
+	resources := workload.Resources
 
 	serviceName := workload.HeadlessServiceName
 	if serviceName == "" {
@@ -322,8 +500,12 @@ func (r *AppDeployReconciler) reconcileStatefulSet(ctx context.Context, appdeplo
 					Spec: corev1.PodSpec{
 						Containers: []corev1.Container{
 							{
-								Name:  name,
-								Image: workload.Image,
+								Name:            name,
+								Image:           workload.Image,
+								ImagePullPolicy: policy,
+								EnvFrom:         envFrom,
+								VolumeMounts:    volumeMounts,
+								Resources:       resources,
 								Ports: []corev1.ContainerPort{
 									{
 										ContainerPort: workload.ContainerPort,
@@ -332,6 +514,8 @@ func (r *AppDeployReconciler) reconcileStatefulSet(ctx context.Context, appdeplo
 								},
 							},
 						},
+						ImagePullSecrets: imagePullSecrets,
+						Volumes:          volumes,
 					},
 				},
 			},
@@ -357,6 +541,12 @@ func (r *AppDeployReconciler) reconcileStatefulSet(ctx context.Context, appdeplo
 	}
 	statefulSet.Spec.Template.Spec.Containers[0].Name = name
 	statefulSet.Spec.Template.Spec.Containers[0].Image = workload.Image
+	statefulSet.Spec.Template.Spec.Containers[0].ImagePullPolicy = policy
+	statefulSet.Spec.Template.Spec.Containers[0].EnvFrom = envFrom
+	statefulSet.Spec.Template.Spec.Containers[0].VolumeMounts = volumeMounts
+	statefulSet.Spec.Template.Spec.Containers[0].Resources = resources
+	statefulSet.Spec.Template.Spec.ImagePullSecrets = imagePullSecrets
+	statefulSet.Spec.Template.Spec.Volumes = volumes
 	statefulSet.Spec.Template.Spec.Containers[0].Ports = []corev1.ContainerPort{
 		{
 			ContainerPort: workload.ContainerPort,
@@ -419,8 +609,8 @@ func (r *AppDeployReconciler) reconcileIngress(ctx context.Context, namespace st
 	if apierrors.IsNotFound(err) {
 		ing = &networkingv1.Ingress{
 			ObjectMeta: metav1.ObjectMeta{
-				Name:      ingress.Name,
-				Namespace: namespace,
+				Name:        ingress.Name,
+				Namespace:   namespace,
 				Annotations: ingress.Annotations,
 			},
 			Spec: networkingv1.IngressSpec{
@@ -428,16 +618,19 @@ func (r *AppDeployReconciler) reconcileIngress(ctx context.Context, namespace st
 				Rules:            buildIngressRules(ingress),
 			},
 		}
-		if ingress.TLSSecretName != "" {
-			ing.Spec.TLS = []networkingv1.IngressTLS{
-				{
-					SecretName: ingress.TLSSecretName,
-					Hosts:      []string{ingress.Host},
-				},
+			if ingress.TLSSecretName != "" {
+				ing.Spec.TLS = []networkingv1.IngressTLS{
+					{
+						SecretName: ingress.TLSSecretName,
+						Hosts:      []string{ingress.Host},
+					},
+				}
 			}
+			if err := applyIngressOverrides(ing, ingress.Overrides.Raw); err != nil {
+				return err
+			}
+			return r.Create(ctx, ing)
 		}
-		return r.Create(ctx, ing)
-	}
 	if err != nil {
 		return err
 	}
@@ -454,6 +647,9 @@ func (r *AppDeployReconciler) reconcileIngress(ctx context.Context, namespace st
 		}
 	} else {
 		ing.Spec.TLS = nil
+	}
+	if err := applyIngressOverrides(ing, ingress.Overrides.Raw); err != nil {
+		return err
 	}
 
 	return r.Update(ctx, ing)
@@ -499,8 +695,165 @@ func buildIngressRules(ingress *appdeployv1alpha1.AppDeployIngress) []networking
 	return rules
 }
 
+//go:fix inline
 func pathTypePtr(pathType networkingv1.PathType) *networkingv1.PathType {
-	return &pathType
+	return new(pathType)
+}
+
+func buildEnvFromSources(workload *appdeployv1alpha1.AppDeployWorkload) []corev1.EnvFromSource {
+	envFrom := make([]corev1.EnvFromSource, 0, len(workload.EnvFromConfig)+len(workload.EnvFromSecrets))
+	for _, configMapName := range workload.EnvFromConfig {
+		envFrom = append(envFrom, corev1.EnvFromSource{
+			ConfigMapRef: &corev1.ConfigMapEnvSource{
+				LocalObjectReference: corev1.LocalObjectReference{
+					Name: configMapName,
+				},
+			},
+		})
+	}
+	for _, secretName := range workload.EnvFromSecrets {
+		envFrom = append(envFrom, corev1.EnvFromSource{
+			SecretRef: &corev1.SecretEnvSource{
+				LocalObjectReference: corev1.LocalObjectReference{
+					Name: secretName,
+				},
+			},
+		})
+	}
+	return envFrom
+}
+
+func imagePullPolicy(workload *appdeployv1alpha1.AppDeployWorkload) corev1.PullPolicy {
+	if workload.ImagePullPolicy != "" {
+		return corev1.PullPolicy(workload.ImagePullPolicy)
+	}
+	return corev1.PullIfNotPresent
+}
+
+func buildImagePullSecrets(workload *appdeployv1alpha1.AppDeployWorkload) []corev1.LocalObjectReference {
+	if len(workload.ImagePullSecrets) == 0 {
+		return nil
+	}
+
+	imagePullSecrets := make([]corev1.LocalObjectReference, 0, len(workload.ImagePullSecrets))
+	for _, name := range workload.ImagePullSecrets {
+		imagePullSecrets = append(imagePullSecrets, corev1.LocalObjectReference{Name: name})
+	}
+	return imagePullSecrets
+}
+
+func buildVolumeMounts(workload *appdeployv1alpha1.AppDeployWorkload) []corev1.VolumeMount {
+	if len(workload.VolumeMounts) == 0 {
+		return nil
+	}
+
+	volumeMounts := make([]corev1.VolumeMount, 0, len(workload.VolumeMounts))
+	for _, mount := range workload.VolumeMounts {
+		volumeMounts = append(volumeMounts, corev1.VolumeMount{
+			Name:      mount.Name,
+			MountPath: mount.MountPath,
+		})
+	}
+	return volumeMounts
+}
+
+func buildVolumes(workload *appdeployv1alpha1.AppDeployWorkload) []corev1.Volume {
+	if len(workload.VolumeMounts) == 0 {
+		return nil
+	}
+
+	volumes := make([]corev1.Volume, 0, len(workload.VolumeMounts))
+	for _, mount := range workload.VolumeMounts {
+		volume := corev1.Volume{
+			Name: mount.Name,
+		}
+		if mount.ConfigMapName != "" {
+			volume.VolumeSource.ConfigMap = &corev1.ConfigMapVolumeSource{
+				LocalObjectReference: corev1.LocalObjectReference{Name: mount.ConfigMapName},
+			}
+		}
+		if mount.SecretName != "" {
+			volume.VolumeSource.Secret = &corev1.SecretVolumeSource{
+				SecretName: mount.SecretName,
+			}
+		}
+		volumes = append(volumes, volume)
+	}
+	return volumes
+}
+
+func applyDeploymentOverrides(deployment *appsv1.Deployment, raw []byte) error {
+	if len(raw) == 0 {
+		return nil
+	}
+
+	var overrides map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &overrides); err != nil {
+		return fmt.Errorf("invalid deployment overrides: %w", err)
+	}
+
+	for key := range overrides {
+		if _, ok := deploymentOverrideAllowlist[key]; !ok {
+			return fmt.Errorf("deployment override path %q is not allowed", key)
+		}
+	}
+
+	for key, value := range overrides {
+		switch key {
+		case "metadata.annotations":
+			if err := json.Unmarshal(value, &deployment.Annotations); err != nil {
+				return fmt.Errorf("invalid deployment override %q: %w", key, err)
+			}
+		case "metadata.labels":
+			if err := json.Unmarshal(value, &deployment.Labels); err != nil {
+				return fmt.Errorf("invalid deployment override %q: %w", key, err)
+			}
+		case "spec.strategy":
+			if err := json.Unmarshal(value, &deployment.Spec.Strategy); err != nil {
+				return fmt.Errorf("invalid deployment override %q: %w", key, err)
+			}
+		case "spec.template.metadata.annotations":
+			if err := json.Unmarshal(value, &deployment.Spec.Template.Annotations); err != nil {
+				return fmt.Errorf("invalid deployment override %q: %w", key, err)
+			}
+		case "spec.template.spec.securityContext":
+			var securityContext corev1.PodSecurityContext
+			if err := json.Unmarshal(value, &securityContext); err != nil {
+				return fmt.Errorf("invalid deployment override %q: %w", key, err)
+			}
+			deployment.Spec.Template.Spec.SecurityContext = &securityContext
+		}
+	}
+
+	return nil
+}
+
+func applyIngressOverrides(ingress *networkingv1.Ingress, raw []byte) error {
+	if len(raw) == 0 {
+		return nil
+	}
+
+	var overrides map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &overrides); err != nil {
+		return fmt.Errorf("invalid ingress overrides: %w", err)
+	}
+
+	for key := range overrides {
+		if _, ok := ingressOverrideAllowlist[key]; !ok {
+			return fmt.Errorf("ingress override path %q is not allowed", key)
+		}
+	}
+
+	for key, value := range overrides {
+		switch key {
+		case "metadata.labels":
+			if err := json.Unmarshal(value, &ingress.Labels); err != nil {
+				return fmt.Errorf("invalid ingress override %q: %w", key, err)
+			}
+		}
+	}
+
+	return nil
 }
 
 // SetupWithManager sets up the controller with the Manager.

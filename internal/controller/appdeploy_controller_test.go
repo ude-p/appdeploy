@@ -109,6 +109,95 @@ var _ = Describe("AppDeploy Controller", func() {
 		})
 	})
 
+	Context("When reconciling ConfigMaps across namespaces", func() {
+		const (
+			resourceName      = "configmap-resource"
+			resourceNamespace = "default"
+		)
+
+		ctx := context.Background()
+
+		typeNamespacedName := types.NamespacedName{
+			Name:      resourceName,
+			Namespace: resourceNamespace,
+		}
+		appdeploy := &appdeployv1alpha1.AppDeploy{}
+
+		BeforeEach(func() {
+			By("creating the custom resource for the Kind AppDeploy")
+			err := k8sClient.Get(ctx, typeNamespacedName, appdeploy)
+			if err != nil && errors.IsNotFound(err) {
+				resource := &appdeployv1alpha1.AppDeploy{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      resourceName,
+						Namespace: resourceNamespace,
+					},
+					Spec: appdeployv1alpha1.AppDeploySpec{
+						Namespaces: []string{resourceNamespace, "staging"},
+						SelectedNamespaces: []string{"staging"},
+						ConfigMaps: []appdeployv1alpha1.AppDeployConfigMap{
+							{
+								Name: "common-config",
+								Data: map[string]string{
+									"HOST": "0.0.0.0",
+								},
+							},
+							{
+								Name:  "app-config",
+								Scope: "default",
+								Data: map[string]string{
+									"APP_ENV": "prod",
+								},
+							},
+							{
+								Name:  "app-config",
+								Scope: "staging",
+								Data: map[string]string{
+									"APP_ENV": "staging",
+								},
+							},
+						},
+					},
+				}
+				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
+			}
+		})
+
+		AfterEach(func() {
+			resource := &appdeployv1alpha1.AppDeploy{}
+			err := k8sClient.Get(ctx, typeNamespacedName, resource)
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Cleanup the specific resource instance AppDeploy")
+			Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
+		})
+
+		It("should reconcile ConfigMaps only in the selected namespace", func() {
+			By("Reconciling the created resource")
+			controllerReconciler := &AppDeployReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			commonConfig := &corev1.ConfigMap{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "common-config", Namespace: "staging"}, commonConfig)).To(Succeed())
+			Expect(commonConfig.Data).To(HaveKeyWithValue("HOST", "0.0.0.0"))
+
+			stagingConfig := &corev1.ConfigMap{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "app-config", Namespace: "staging"}, stagingConfig)).To(Succeed())
+			Expect(stagingConfig.Data).To(HaveKeyWithValue("APP_ENV", "staging"))
+
+			defaultConfig := &corev1.ConfigMap{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "common-config", Namespace: "default"}, defaultConfig)).NotTo(Succeed())
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "app-config", Namespace: "default"}, defaultConfig)).NotTo(Succeed())
+		})
+	})
+
 	Context("When reconciling a StatefulSet workload", func() {
 		const (
 			resourceName      = "stateful-resource"

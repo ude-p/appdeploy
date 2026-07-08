@@ -17,6 +17,8 @@ limitations under the License.
 package v1alpha1
 
 import (
+	corev1 "k8s.io/api/core/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -47,9 +49,22 @@ type AppDeploySecret struct {
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
 	Name string `json:"name"`
+	// +kubebuilder:default=Opaque
+	// +kubebuilder:validation:Enum=Opaque;ImagePull
+	Type string `json:"type,omitempty"`
 	// +kubebuilder:validation:MinLength=1
-	Scope string            `json:"scope,omitempty"`
-	Data  map[string]string `json:"data,omitempty"`
+	Scope string `json:"scope,omitempty"`
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	RemoteKey string `json:"remoteKey"`
+	// +kubebuilder:default=cluster-vault
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	SecretStoreName string `json:"secretStoreName"`
+	// +kubebuilder:default=ClusterSecretStore
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:Enum=SecretStore;ClusterSecretStore
+	SecretStoreKind string `json:"secretStoreKind"`
 }
 
 type AppDeployWorkload struct {
@@ -68,12 +83,32 @@ type AppDeployWorkload struct {
 	Replicas *int32 `json:"replicas,omitempty"`
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:Minimum=1
-	ContainerPort       int32    `json:"containerPort"`
-	ServiceType         string   `json:"serviceType,omitempty"`
-	ServicePort         *int32   `json:"servicePort,omitempty"`
-	HeadlessServiceName string   `json:"headlessServiceName,omitempty"`
-	EnvFromConfig       []string `json:"envFromConfig,omitempty"`
-	EnvFromSecrets      []string `json:"envFromSecrets,omitempty"`
+	ContainerPort int32                       `json:"containerPort"`
+	Resources     corev1.ResourceRequirements `json:"resources,omitempty"`
+	// +kubebuilder:validation:Enum=Always;IfNotPresent;Never
+	ImagePullPolicy     string                 `json:"imagePullPolicy,omitempty"`
+	ServiceType         string                 `json:"serviceType,omitempty"`
+	ServicePort         *int32                 `json:"servicePort,omitempty"`
+	HeadlessServiceName string                 `json:"headlessServiceName,omitempty"`
+	EnvFromConfig       []string               `json:"envFromConfig,omitempty"`
+	EnvFromSecrets      []string               `json:"envFromSecrets,omitempty"`
+	ImagePullSecrets    []string               `json:"imagePullSecrets,omitempty"`
+	VolumeMounts        []AppDeployVolumeMount `json:"volumeMounts,omitempty"`
+	// +kubebuilder:validation:Schemaless
+	Overrides apiextensionsv1.JSON `json:"overrides,omitempty"`
+}
+
+type AppDeployVolumeMount struct {
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	Name string `json:"name"`
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	MountPath string `json:"mountPath"`
+	// +kubebuilder:validation:MinLength=1
+	ConfigMapName string `json:"configMapName,omitempty"`
+	// +kubebuilder:validation:MinLength=1
+	SecretName string `json:"secretName,omitempty"`
 }
 
 type AppDeployIngress struct {
@@ -91,6 +126,8 @@ type AppDeployIngress struct {
 	Annotations   map[string]string      `json:"annotations,omitempty"`
 	TLSSecretName string                 `json:"tlsSecretName,omitempty"`
 	Rules         []AppDeployIngressRule `json:"rules,omitempty"`
+	// +kubebuilder:validation:Schemaless
+	Overrides apiextensionsv1.JSON `json:"overrides,omitempty"`
 }
 
 type AppDeployIngressRule struct {
