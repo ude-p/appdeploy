@@ -23,10 +23,9 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /app
 RUN useradd --system --uid 10001 --create-home appuser
 
-COPY --from=builder /out/manager /usr/local/bin/manager
+COPY --from=builder /out/manager /manager
 
 USER 10001
 CMD ["manager"]
