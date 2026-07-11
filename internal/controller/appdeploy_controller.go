@@ -245,7 +245,7 @@ func (r *AppDeployReconciler) ensureESOConfigured() error {
 		return fmt.Errorf("external secrets operator is not configured: rest mapper is unavailable")
 	}
 
-	_, err := r.RESTMapper.RESTMapping(schema.GroupKind{Group: "external-secrets.io", Kind: "ExternalSecret"}, "v1beta1")
+	_, err := r.RESTMapper.RESTMapping(schema.GroupKind{Group: "external-secrets.io", Kind: "ExternalSecret"}, "v1")
 	if err != nil {
 		return fmt.Errorf("external secrets operator is not configured: %w", err)
 	}
@@ -336,7 +336,7 @@ func (r *AppDeployReconciler) reconcileConfigMap(ctx context.Context, namespace 
 func (r *AppDeployReconciler) reconcileExternalSecret(ctx context.Context, namespace string, secret *appdeployv1.AppDeploySecret) error {
 	gvk := schema.GroupVersionKind{
 		Group:   "external-secrets.io",
-		Version: "v1beta1",
+		Version: "v1",
 		Kind:    "ExternalSecret",
 	}
 
@@ -347,7 +347,7 @@ func (r *AppDeployReconciler) reconcileExternalSecret(ctx context.Context, names
 
 	externalSecret := &unstructured.Unstructured{
 		Object: map[string]any{
-			"apiVersion": "external-secrets.io/v1beta1",
+			"apiVersion": "external-secrets.io/v1",
 			"kind":       "ExternalSecret",
 			"metadata": map[string]any{
 				"name":      secret.Name,
