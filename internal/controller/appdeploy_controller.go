@@ -61,6 +61,11 @@ var ingressOverrideAllowlist = map[string]struct{}{
 // +kubebuilder:rbac:groups=appdeploy.io,resources=appdeploys/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=appdeploy.io,resources=appdeploys/finalizers,verbs=update
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=apps,resources=statefulsets,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=networking.k8s.io,resources=ingresses,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=external-secrets.io,resources=externalsecrets,verbs=get;list;watch;create;update;patch;delete
 
 func (r *AppDeployReconciler) Reconcile(ctx context.Context, req ctrl.Request) (result ctrl.Result, err error) {
