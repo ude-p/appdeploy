@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package v1alpha1
+package v1
 
 import (
 	corev1 "k8s.io/api/core/v1"
@@ -161,6 +161,7 @@ type AppDeploy struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitzero"`
 	Spec              AppDeploySpec   `json:"spec"`
+	// +optional
 	Status            AppDeployStatus `json:"status,omitzero"`
 }
 

@@ -1,9 +1,0 @@
-.git
-README.md
-justfile
-PROJECT
-config/
-test/
-.github/
-.devcontainer/
-hack/

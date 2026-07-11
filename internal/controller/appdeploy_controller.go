@@ -36,7 +36,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	appdeployv1alpha1 "github.com/ude-p/appdeploy/api/v1alpha1"
+	appdeployv1 "github.com/ude-p/appdeploy/api/v1"
 )
 
 type AppDeployReconciler struct {
@@ -64,7 +64,7 @@ var ingressOverrideAllowlist = map[string]struct{}{
 // +kubebuilder:rbac:groups=external-secrets.io,resources=externalsecrets,verbs=get;list;watch;create;update;patch;delete
 
 func (r *AppDeployReconciler) Reconcile(ctx context.Context, req ctrl.Request) (result ctrl.Result, err error) {
-	var appdeploy appdeployv1alpha1.AppDeploy
+	var appdeploy appdeployv1.AppDeploy
 	if err := r.Get(ctx, req.NamespacedName, &appdeploy); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
@@ -163,7 +163,7 @@ func (r *AppDeployReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	return ctrl.Result{}, nil
 }
 
-func (r *AppDeployReconciler) validate(appdeploy *appdeployv1alpha1.AppDeploy) error {
+func (r *AppDeployReconciler) validate(appdeploy *appdeployv1.AppDeploy) error {
 	if len(appdeploy.Spec.Namespaces) == 0 {
 		return fmt.Errorf("spec.namespaces must not be empty")
 	}
@@ -253,7 +253,7 @@ func (r *AppDeployReconciler) ensureESOConfigured() error {
 	return nil
 }
 
-func (r *AppDeployReconciler) updateStatus(ctx context.Context, appdeploy *appdeployv1alpha1.AppDeploy, reconcileErr error) error {
+func (r *AppDeployReconciler) updateStatus(ctx context.Context, appdeploy *appdeployv1.AppDeploy, reconcileErr error) error {
 	now := metav1.Now()
 	readyCondition := metav1.Condition{
 		Type:               "Ready",
@@ -310,7 +310,7 @@ func upsertCondition(conditions []metav1.Condition, condition metav1.Condition) 
 	return append(conditions, condition)
 }
 
-func (r *AppDeployReconciler) reconcileConfigMap(ctx context.Context, namespace string, configMap *appdeployv1alpha1.AppDeployConfigMap) error {
+func (r *AppDeployReconciler) reconcileConfigMap(ctx context.Context, namespace string, configMap *appdeployv1.AppDeployConfigMap) error {
 	cm := &corev1.ConfigMap{}
 	key := client.ObjectKey{Name: configMap.Name, Namespace: namespace}
 	err := r.Get(ctx, key, cm)
@@ -333,7 +333,7 @@ func (r *AppDeployReconciler) reconcileConfigMap(ctx context.Context, namespace 
 	return r.Update(ctx, cm)
 }
 
-func (r *AppDeployReconciler) reconcileExternalSecret(ctx context.Context, namespace string, secret *appdeployv1alpha1.AppDeploySecret) error {
+func (r *AppDeployReconciler) reconcileExternalSecret(ctx context.Context, namespace string, secret *appdeployv1.AppDeploySecret) error {
 	gvk := schema.GroupVersionKind{
 		Group:   "external-secrets.io",
 		Version: "v1beta1",
@@ -392,7 +392,7 @@ func (r *AppDeployReconciler) reconcileExternalSecret(ctx context.Context, names
 	return r.Update(ctx, current)
 }
 
-func (r *AppDeployReconciler) reconcileDeployment(ctx context.Context, namespace string, workload *appdeployv1alpha1.AppDeployWorkload) error {
+func (r *AppDeployReconciler) reconcileDeployment(ctx context.Context, namespace string, workload *appdeployv1.AppDeployWorkload) error {
 	name := workload.Name
 	replicas := int32(1)
 	if workload.Replicas != nil {
@@ -484,7 +484,7 @@ func (r *AppDeployReconciler) reconcileDeployment(ctx context.Context, namespace
 	return r.Update(ctx, deployment)
 }
 
-func (r *AppDeployReconciler) reconcileService(ctx context.Context, namespace string, workload *appdeployv1alpha1.AppDeployWorkload) error {
+func (r *AppDeployReconciler) reconcileService(ctx context.Context, namespace string, workload *appdeployv1.AppDeployWorkload) error {
 	if workload.ServiceType == "" {
 		return nil
 	}
@@ -527,7 +527,7 @@ func (r *AppDeployReconciler) reconcileService(ctx context.Context, namespace st
 	return r.Update(ctx, service)
 }
 
-func (r *AppDeployReconciler) reconcileStatefulSet(ctx context.Context, namespace string, workload *appdeployv1alpha1.AppDeployWorkload) error {
+func (r *AppDeployReconciler) reconcileStatefulSet(ctx context.Context, namespace string, workload *appdeployv1.AppDeployWorkload) error {
 	name := workload.Name
 	replicas := int32(1)
 	if workload.Replicas != nil {
@@ -623,7 +623,7 @@ func (r *AppDeployReconciler) reconcileStatefulSet(ctx context.Context, namespac
 	return r.Update(ctx, statefulSet)
 }
 
-func (r *AppDeployReconciler) reconcileJob(ctx context.Context, namespace string, workload *appdeployv1alpha1.AppDeployWorkload) error {
+func (r *AppDeployReconciler) reconcileJob(ctx context.Context, namespace string, workload *appdeployv1.AppDeployWorkload) error {
 	name := workload.Name
 	backoffLimit := int32(6)
 	if workload.BackoffLimit != nil {
@@ -736,14 +736,14 @@ func (r *AppDeployReconciler) reconcileHeadlessService(ctx context.Context, name
 	return r.Update(ctx, service)
 }
 
-func workloadContainerPort(workload *appdeployv1alpha1.AppDeployWorkload) int32 {
+func workloadContainerPort(workload *appdeployv1.AppDeployWorkload) int32 {
 	if workload.ContainerPort == nil {
 		return 0
 	}
 	return *workload.ContainerPort
 }
 
-func (r *AppDeployReconciler) reconcileIngress(ctx context.Context, namespace string, ingress *appdeployv1alpha1.AppDeployIngress) error {
+func (r *AppDeployReconciler) reconcileIngress(ctx context.Context, namespace string, ingress *appdeployv1.AppDeployIngress) error {
 	ing := &networkingv1.Ingress{}
 	key := client.ObjectKey{Name: ingress.Name, Namespace: namespace}
 	err := r.Get(ctx, key, ing)
@@ -796,7 +796,7 @@ func (r *AppDeployReconciler) reconcileIngress(ctx context.Context, namespace st
 	return r.Update(ctx, ing)
 }
 
-func buildIngressRules(ingress *appdeployv1alpha1.AppDeployIngress) []networkingv1.IngressRule {
+func buildIngressRules(ingress *appdeployv1.AppDeployIngress) []networkingv1.IngressRule {
 	rules := make([]networkingv1.IngressRule, 0, len(ingress.Rules))
 	httpPaths := make([]networkingv1.HTTPIngressPath, 0, len(ingress.Rules))
 	for _, rule := range ingress.Rules {
@@ -836,7 +836,7 @@ func pathTypePtr(pathType networkingv1.PathType) *networkingv1.PathType {
 	return new(pathType)
 }
 
-func buildEnvFromSources(workload *appdeployv1alpha1.AppDeployWorkload) []corev1.EnvFromSource {
+func buildEnvFromSources(workload *appdeployv1.AppDeployWorkload) []corev1.EnvFromSource {
 	envFrom := make([]corev1.EnvFromSource, 0, len(workload.EnvFromConfig)+len(workload.EnvFromSecrets))
 	for _, configMapName := range workload.EnvFromConfig {
 		envFrom = append(envFrom, corev1.EnvFromSource{
@@ -859,14 +859,14 @@ func buildEnvFromSources(workload *appdeployv1alpha1.AppDeployWorkload) []corev1
 	return envFrom
 }
 
-func imagePullPolicy(workload *appdeployv1alpha1.AppDeployWorkload) corev1.PullPolicy {
+func imagePullPolicy(workload *appdeployv1.AppDeployWorkload) corev1.PullPolicy {
 	if workload.ImagePullPolicy != "" {
 		return corev1.PullPolicy(workload.ImagePullPolicy)
 	}
 	return corev1.PullIfNotPresent
 }
 
-func buildImagePullSecrets(workload *appdeployv1alpha1.AppDeployWorkload) []corev1.LocalObjectReference {
+func buildImagePullSecrets(workload *appdeployv1.AppDeployWorkload) []corev1.LocalObjectReference {
 	if len(workload.ImagePullSecrets) == 0 {
 		return nil
 	}
@@ -878,7 +878,7 @@ func buildImagePullSecrets(workload *appdeployv1alpha1.AppDeployWorkload) []core
 	return imagePullSecrets
 }
 
-func buildVolumeMounts(workload *appdeployv1alpha1.AppDeployWorkload) []corev1.VolumeMount {
+func buildVolumeMounts(workload *appdeployv1.AppDeployWorkload) []corev1.VolumeMount {
 	if len(workload.VolumeMounts) == 0 {
 		return nil
 	}
@@ -893,7 +893,7 @@ func buildVolumeMounts(workload *appdeployv1alpha1.AppDeployWorkload) []corev1.V
 	return volumeMounts
 }
 
-func buildVolumes(workload *appdeployv1alpha1.AppDeployWorkload) []corev1.Volume {
+func buildVolumes(workload *appdeployv1.AppDeployWorkload) []corev1.Volume {
 	if len(workload.VolumeMounts) == 0 {
 		return nil
 	}
@@ -994,7 +994,7 @@ func applyIngressOverrides(ingress *networkingv1.Ingress, raw []byte) error {
 
 func (r *AppDeployReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&appdeployv1alpha1.AppDeploy{}).
+		For(&appdeployv1.AppDeploy{}).
 		Named("appdeploy").
 		Complete(r)
 }

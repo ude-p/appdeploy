@@ -31,7 +31,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
 
-	appdeployv1alpha1 "github.com/ude-p/appdeploy/api/v1alpha1"
+	appdeployv1 "github.com/ude-p/appdeploy/api/v1"
 )
 
 var _ = Describe("AppDeploy Controller", func() {
@@ -47,20 +47,20 @@ var _ = Describe("AppDeploy Controller", func() {
 			Name:      resourceName,
 			Namespace: resourceNamespace,
 		}
-		appdeploy := &appdeployv1alpha1.AppDeploy{}
+		appdeploy := &appdeployv1.AppDeploy{}
 
 		BeforeEach(func() {
 			By("creating the custom resource for the Kind AppDeploy")
 			err := k8sClient.Get(ctx, typeNamespacedName, appdeploy)
 			if err != nil && errors.IsNotFound(err) {
-				resource := &appdeployv1alpha1.AppDeploy{
+				resource := &appdeployv1.AppDeploy{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      resourceName,
 						Namespace: resourceNamespace,
 					},
-					Spec: appdeployv1alpha1.AppDeploySpec{
+					Spec: appdeployv1.AppDeploySpec{
 						Namespaces: []string{resourceNamespace},
-						Workloads: []appdeployv1alpha1.AppDeployWorkload{
+						Workloads: []appdeployv1.AppDeployWorkload{
 							{
 								Name:          "app",
 								Image:         "example.com/app-image:tag",
@@ -76,7 +76,7 @@ var _ = Describe("AppDeploy Controller", func() {
 
 		AfterEach(func() {
 			// TODO(user): Cleanup logic after each test, like removing the resource instance.
-			resource := &appdeployv1alpha1.AppDeploy{}
+			resource := &appdeployv1.AppDeploy{}
 			err := k8sClient.Get(ctx, typeNamespacedName, resource)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -123,21 +123,21 @@ var _ = Describe("AppDeploy Controller", func() {
 			Name:      resourceName,
 			Namespace: resourceNamespace,
 		}
-		appdeploy := &appdeployv1alpha1.AppDeploy{}
+		appdeploy := &appdeployv1.AppDeploy{}
 
 		BeforeEach(func() {
 			By("creating the custom resource for the Kind AppDeploy")
 			err := k8sClient.Get(ctx, typeNamespacedName, appdeploy)
 			if err != nil && errors.IsNotFound(err) {
-				resource := &appdeployv1alpha1.AppDeploy{
+				resource := &appdeployv1.AppDeploy{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      resourceName,
 						Namespace: resourceNamespace,
 					},
-					Spec: appdeployv1alpha1.AppDeploySpec{
+					Spec: appdeployv1.AppDeploySpec{
 						Namespaces: []string{resourceNamespace, "staging"},
 						SelectedNamespaces: []string{"staging"},
-						ConfigMaps: []appdeployv1alpha1.AppDeployConfigMap{
+						ConfigMaps: []appdeployv1.AppDeployConfigMap{
 							{
 								Name: "common-config",
 								Data: map[string]string{
@@ -166,7 +166,7 @@ var _ = Describe("AppDeploy Controller", func() {
 		})
 
 		AfterEach(func() {
-			resource := &appdeployv1alpha1.AppDeploy{}
+			resource := &appdeployv1.AppDeploy{}
 			err := k8sClient.Get(ctx, typeNamespacedName, resource)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -212,20 +212,20 @@ var _ = Describe("AppDeploy Controller", func() {
 			Name:      resourceName,
 			Namespace: resourceNamespace,
 		}
-		appdeploy := &appdeployv1alpha1.AppDeploy{}
+		appdeploy := &appdeployv1.AppDeploy{}
 
 		BeforeEach(func() {
 			By("creating the custom resource for the Kind AppDeploy")
 			err := k8sClient.Get(ctx, typeNamespacedName, appdeploy)
 			if err != nil && errors.IsNotFound(err) {
-				resource := &appdeployv1alpha1.AppDeploy{
+				resource := &appdeployv1.AppDeploy{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      resourceName,
 						Namespace: resourceNamespace,
 					},
-					Spec: appdeployv1alpha1.AppDeploySpec{
+					Spec: appdeployv1.AppDeploySpec{
 						Namespaces: []string{resourceNamespace},
-						Workloads: []appdeployv1alpha1.AppDeployWorkload{
+						Workloads: []appdeployv1.AppDeployWorkload{
 							{
 								Name:                "db",
 								Kind:                "StatefulSet",
@@ -241,7 +241,7 @@ var _ = Describe("AppDeploy Controller", func() {
 		})
 
 		AfterEach(func() {
-			resource := &appdeployv1alpha1.AppDeploy{}
+			resource := &appdeployv1.AppDeploy{}
 			err := k8sClient.Get(ctx, typeNamespacedName, resource)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -289,20 +289,20 @@ var _ = Describe("AppDeploy Controller", func() {
 			Name:      resourceName,
 			Namespace: resourceNamespace,
 		}
-		appdeploy := &appdeployv1alpha1.AppDeploy{}
+		appdeploy := &appdeployv1.AppDeploy{}
 
 		BeforeEach(func() {
 			By("creating the custom resource for the Kind AppDeploy")
 			err := k8sClient.Get(ctx, typeNamespacedName, appdeploy)
 			if err != nil && errors.IsNotFound(err) {
-				resource := &appdeployv1alpha1.AppDeploy{
+				resource := &appdeployv1.AppDeploy{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      resourceName,
 						Namespace: resourceNamespace,
 					},
-					Spec: appdeployv1alpha1.AppDeploySpec{
+					Spec: appdeployv1.AppDeploySpec{
 						Namespaces: []string{resourceNamespace},
-						Workloads: []appdeployv1alpha1.AppDeployWorkload{
+						Workloads: []appdeployv1.AppDeployWorkload{
 							{
 								Name:                    "db-init",
 								Kind:                    "Job",
@@ -320,7 +320,7 @@ var _ = Describe("AppDeploy Controller", func() {
 		})
 
 		AfterEach(func() {
-			resource := &appdeployv1alpha1.AppDeploy{}
+			resource := &appdeployv1.AppDeploy{}
 			err := k8sClient.Get(ctx, typeNamespacedName, resource)
 			Expect(err).NotTo(HaveOccurred())
 

@@ -4,9 +4,9 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.21.0
-  name: appdeploys.appdeploy.appdeploy.io
+  name: appdeploys.appdeploy.io
 spec:
-  group: appdeploy.appdeploy.io
+  group: appdeploy.io
   names:
     kind: AppDeploy
     listKind: AppDeployList
@@ -14,7 +14,7 @@ spec:
     singular: appdeploy
   scope: Namespaced
   versions:
-  - name: v1alpha1
+  - name: v1
     schema:
       openAPIV3Schema:
         properties:
@@ -70,7 +70,9 @@ spec:
                     name:
                       minLength: 1
                       type: string
-                    overrides: {}
+                    overrides:
+                      type: object
+                      x-kubernetes-preserve-unknown-fields: true
                     rules:
                       items:
                         properties:
@@ -150,9 +152,20 @@ spec:
               workloads:
                 items:
                   properties:
+                    args:
+                      items:
+                        type: string
+                      type: array
+                    backoffLimit:
+                      format: int32
+                      minimum: 0
+                      type: integer
+                    command:
+                      items:
+                        type: string
+                      type: array
                     containerPort:
                       format: int32
-                      minimum: 1
                       type: integer
                     envFromConfig:
                       items:
@@ -182,11 +195,14 @@ spec:
                       enum:
                       - Deployment
                       - StatefulSet
+                      - Job
                       type: string
                     name:
                       minLength: 1
                       type: string
-                    overrides: {}
+                    overrides:
+                      type: object
+                      x-kubernetes-preserve-unknown-fields: true
                     replicas:
                       default: 1
                       format: int32
@@ -259,6 +275,10 @@ spec:
                       type: integer
                     serviceType:
                       type: string
+                    ttlSecondsAfterFinished:
+                      format: int32
+                      minimum: 0
+                      type: integer
                     volumeMounts:
                       items:
                         properties:
@@ -280,7 +300,6 @@ spec:
                         type: object
                       type: array
                   required:
-                  - containerPort
                   - image
                   - name
                   type: object
@@ -353,7 +372,6 @@ spec:
         required:
         - metadata
         - spec
-        - status
         type: object
     served: true
     storage: true

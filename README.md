@@ -25,7 +25,7 @@ It also wires pod fields like:
 
 ## CRD Shape
 
-Current API version: `deploy.ude/v1alpha1`
+Current API version: `appdeploy.io/v1`
 
 Top-level spec fields:
 
