@@ -17,7 +17,7 @@ rules:
   - update
   - watch
 - apiGroups:
-  - appdeploy.appdeploy.io
+  - appdeploy.io
   resources:
   - appdeploys
   verbs:
@@ -29,13 +29,13 @@ rules:
   - update
   - watch
 - apiGroups:
-  - appdeploy.appdeploy.io
+  - appdeploy.io
   resources:
   - appdeploys/finalizers
   verbs:
   - update
 - apiGroups:
-  - appdeploy.appdeploy.io
+  - appdeploy.io
   resources:
   - appdeploys/status
   verbs:

@@ -57,9 +57,9 @@ var ingressOverrideAllowlist = map[string]struct{}{
 	"metadata.labels": {},
 }
 
-// +kubebuilder:rbac:groups=appdeploy.appdeploy.io,resources=appdeploys,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=appdeploy.appdeploy.io,resources=appdeploys/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=appdeploy.appdeploy.io,resources=appdeploys/finalizers,verbs=update
+// +kubebuilder:rbac:groups=appdeploy.io,resources=appdeploys,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=appdeploy.io,resources=appdeploys/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=appdeploy.io,resources=appdeploys/finalizers,verbs=update
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=external-secrets.io,resources=externalsecrets,verbs=get;list;watch;create;update;patch;delete
 
