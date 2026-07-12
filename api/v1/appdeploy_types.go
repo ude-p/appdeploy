@@ -42,6 +42,7 @@ type AppDeployConfigMap struct {
 	Name string `json:"name"`
 	// +kubebuilder:validation:MinLength=1
 	Scope string            `json:"scope,omitempty"`
+	Override bool           `json:"override,omitempty"`
 	Data  map[string]string `json:"data,omitempty"`
 }
 

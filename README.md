@@ -40,9 +40,29 @@ Top-level spec fields:
 
 - `name`: required
 - `scope`: optional
+- `override`: optional, requires `scope`
 - `data`: key/value data
 
 An empty `scope` means the config map is created in every selected namespace.
+
+Scoped config maps can override a default config map with the same name:
+
+```yaml
+configMaps:
+  - name: app-config
+    data:
+      APP_ENV: prod
+      HOST: 0.0.0.0
+      PORT: "8090"
+
+  - name: app-config
+    scope: staging
+    override: true
+    data:
+      APP_ENV: staging
+```
+
+The scoped override inherits default keys and only replaces the keys it defines.
 
 ### Secrets
 
@@ -96,6 +116,9 @@ An empty `scope` means the config map is created in every selected namespace.
 - duplicate namespaces are rejected
 - duplicate target object names in the same namespace are rejected
 - empty `scope` means “apply to every selected namespace”
+- config map overrides must be scoped
+- config map overrides require a default config map with the same name
+- config map overrides can only replace existing default keys
 - `StatefulSet` workloads require `headlessServiceName`
 - `Job` workloads skip service creation
 - `volumeMounts` must specify exactly one of `configMapName` or `secretName`
