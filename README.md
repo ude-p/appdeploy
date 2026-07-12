@@ -6,6 +6,7 @@
 
 From a single `AppDeploy` resource, the controller can create:
 
+- `Namespace` objects
 - `ConfigMap` objects
 - `ExternalSecret` objects for ESO
 - `Deployment` objects
@@ -29,7 +30,7 @@ Current API version: `appdeploy.io/v1`
 
 Top-level spec fields:
 
-- `namespaces`: required target namespaces
+- `namespaces`: required namespaces to create and target
 - `selectedNamespaces`: optional subset of `namespaces`
 - `configMaps`: config maps to create
 - `secrets`: ESO-backed secrets to fan out
@@ -112,6 +113,7 @@ The scoped override inherits default keys and only replaces the keys it defines.
 ## Rules
 
 - `namespaces` must contain at least one entry
+- declared namespaces are created before namespace-scoped resources
 - `selectedNamespaces` must be a subset of `namespaces`
 - duplicate namespaces are rejected
 - duplicate target object names in the same namespace are rejected

@@ -23,6 +23,7 @@ type AppDeployReconciler struct {
 // +kubebuilder:rbac:groups=appdeploy.io,resources=appdeploys,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=appdeploy.io,resources=appdeploys/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=appdeploy.io,resources=appdeploys/finalizers,verbs=update
+// +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=apps,resources=statefulsets,verbs=get;list;watch;create;update;patch;delete
@@ -58,6 +59,11 @@ func (r *AppDeployReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	targetNamespaces := appdeploy.Spec.Namespaces
 	if len(appdeploy.Spec.SelectedNamespaces) > 0 {
 		targetNamespaces = appdeploy.Spec.SelectedNamespaces
+	}
+
+	if namespaceErr := r.reconcileNamespaces(ctx, targetNamespaces); namespaceErr != nil {
+		err = namespaceErr
+		return ctrl.Result{}, err
 	}
 
 	for _, namespace := range targetNamespaces {

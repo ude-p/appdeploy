@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"maps"
 	"sort"
 
 	corev1 "k8s.io/api/core/v1"
@@ -14,6 +15,29 @@ import (
 
 	appdeployv1 "github.com/ude-p/appdeploy/api/v1"
 )
+
+func (r *AppDeployReconciler) reconcileNamespaces(ctx context.Context, namespaces []string) error {
+	for _, name := range namespaces {
+		namespace := &corev1.Namespace{}
+		key := client.ObjectKey{Name: name}
+		err := r.Get(ctx, key, namespace)
+		if apierrors.IsNotFound(err) {
+			namespace = &corev1.Namespace{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: name,
+				},
+			}
+			if createErr := r.Create(ctx, namespace); createErr != nil {
+				return createErr
+			}
+			continue
+		}
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
 func validateConfigMaps(configMaps []appdeployv1.AppDeployConfigMap, namespaceSet map[string]struct{}) error {
 	defaultConfigMaps := make(map[string]appdeployv1.AppDeployConfigMap)
@@ -97,9 +121,7 @@ func (r *AppDeployReconciler) reconcileConfigMaps(ctx context.Context, namespace
 		}
 		base := desired[configMap.Name]
 		base.Data = copyStringMap(base.Data)
-		for key, value := range configMap.Data {
-			base.Data[key] = value
-		}
+		maps.Copy(base.Data, configMap.Data)
 		desired[configMap.Name] = base
 	}
 
@@ -145,9 +167,7 @@ func copyStringMap(values map[string]string) map[string]string {
 		return nil
 	}
 	copied := make(map[string]string, len(values))
-	for key, value := range values {
-		copied[key] = value
-	}
+	maps.Copy(copied, values)
 	return copied
 }
 
