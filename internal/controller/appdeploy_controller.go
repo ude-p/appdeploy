@@ -462,11 +462,6 @@ func (r *AppDeployReconciler) reconcileDeployment(ctx context.Context, namespace
 	}
 
 	deployment.Spec.Replicas = &replicas
-	deployment.Spec.Selector = &metav1.LabelSelector{
-		MatchLabels: map[string]string{
-			"appdeploy.appdeploy.io/workload": name,
-		},
-	}
 	deployment.Spec.Template.Labels = map[string]string{
 		"appdeploy.appdeploy.io/workload": name,
 	}
@@ -523,7 +518,9 @@ func (r *AppDeployReconciler) reconcileService(ctx context.Context, namespace st
 		return err
 	}
 
-	service.Spec.Type = corev1.ServiceType(workload.ServiceType)
+	if service.Spec.Type != corev1.ServiceTypeExternalName {
+		service.Spec.Type = corev1.ServiceType(workload.ServiceType)
+	}
 	service.Spec.Selector = map[string]string{
 		"appdeploy.appdeploy.io/workload": workload.Name,
 	}
@@ -602,13 +599,7 @@ func (r *AppDeployReconciler) reconcileStatefulSet(ctx context.Context, namespac
 		return err
 	}
 
-	statefulSet.Spec.ServiceName = serviceName
 	statefulSet.Spec.Replicas = &replicas
-	statefulSet.Spec.Selector = &metav1.LabelSelector{
-		MatchLabels: map[string]string{
-			"appdeploy.appdeploy.io/workload": name,
-		},
-	}
 	statefulSet.Spec.Template.Labels = map[string]string{
 		"appdeploy.appdeploy.io/workload": name,
 	}
@@ -732,7 +723,6 @@ func (r *AppDeployReconciler) reconcileHeadlessService(ctx context.Context, name
 		return err
 	}
 
-	service.Spec.ClusterIP = corev1.ClusterIPNone
 	service.Spec.Selector = map[string]string{
 		"appdeploy.appdeploy.io/workload": workloadName,
 	}
