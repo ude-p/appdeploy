@@ -52,13 +52,13 @@ func (r *AppDeployReconciler) reconcileDeployment(ctx context.Context, namespace
 				Replicas: &replicas,
 				Selector: &metav1.LabelSelector{
 					MatchLabels: map[string]string{
-						"appdeploy.appdeploy.io/workload": name,
+						"appdeploy.io/workload": name,
 					},
 				},
 				Template: corev1.PodTemplateSpec{
 					ObjectMeta: metav1.ObjectMeta{
 						Labels: map[string]string{
-							"appdeploy.appdeploy.io/workload": name,
+							"appdeploy.io/workload": name,
 						},
 					},
 					Spec: corev1.PodSpec{
@@ -90,7 +90,7 @@ func (r *AppDeployReconciler) reconcileDeployment(ctx context.Context, namespace
 
 	deployment.Spec.Replicas = &replicas
 	deployment.Spec.Template.Labels = map[string]string{
-		"appdeploy.appdeploy.io/workload": name,
+		"appdeploy.io/workload": name,
 	}
 	if len(deployment.Spec.Template.Spec.Containers) == 0 {
 		deployment.Spec.Template.Spec.Containers = []corev1.Container{{Name: name}}
@@ -134,7 +134,7 @@ func (r *AppDeployReconciler) reconcileService(ctx context.Context, namespace st
 			Spec: corev1.ServiceSpec{
 				Type: corev1.ServiceType(workload.ServiceType),
 				Selector: map[string]string{
-					"appdeploy.appdeploy.io/workload": workload.Name,
+					"appdeploy.io/workload": workload.Name,
 				},
 				Ports: []corev1.ServicePort{{Port: servicePort, TargetPort: intstr.FromInt(int(containerPort)), Protocol: corev1.ProtocolTCP}},
 			},
@@ -149,7 +149,7 @@ func (r *AppDeployReconciler) reconcileService(ctx context.Context, namespace st
 		service.Spec.Type = corev1.ServiceType(workload.ServiceType)
 	}
 	service.Spec.Selector = map[string]string{
-		"appdeploy.appdeploy.io/workload": workload.Name,
+		"appdeploy.io/workload": workload.Name,
 	}
 	service.Spec.Ports = []corev1.ServicePort{{Port: servicePort, TargetPort: intstr.FromInt(int(containerPort)), Protocol: corev1.ProtocolTCP}}
 
@@ -193,13 +193,13 @@ func (r *AppDeployReconciler) reconcileStatefulSet(ctx context.Context, namespac
 				Replicas:    &replicas,
 				Selector: &metav1.LabelSelector{
 					MatchLabels: map[string]string{
-						"appdeploy.appdeploy.io/workload": name,
+						"appdeploy.io/workload": name,
 					},
 				},
 				Template: corev1.PodTemplateSpec{
 					ObjectMeta: metav1.ObjectMeta{
 						Labels: map[string]string{
-							"appdeploy.appdeploy.io/workload": name,
+							"appdeploy.io/workload": name,
 						},
 					},
 					Spec: corev1.PodSpec{
@@ -228,7 +228,7 @@ func (r *AppDeployReconciler) reconcileStatefulSet(ctx context.Context, namespac
 
 	statefulSet.Spec.Replicas = &replicas
 	statefulSet.Spec.Template.Labels = map[string]string{
-		"appdeploy.appdeploy.io/workload": name,
+		"appdeploy.io/workload": name,
 	}
 	if len(statefulSet.Spec.Template.Spec.Containers) == 0 {
 		statefulSet.Spec.Template.Spec.Containers = []corev1.Container{{Name: name}}
@@ -274,7 +274,7 @@ func (r *AppDeployReconciler) reconcileJob(ctx context.Context, namespace string
 				Template: corev1.PodTemplateSpec{
 					ObjectMeta: metav1.ObjectMeta{
 						Labels: map[string]string{
-							"appdeploy.appdeploy.io/workload": name,
+							"appdeploy.io/workload": name,
 						},
 					},
 					Spec: corev1.PodSpec{
@@ -306,7 +306,7 @@ func (r *AppDeployReconciler) reconcileJob(ctx context.Context, namespace string
 	job.Spec.BackoffLimit = &backoffLimit
 	job.Spec.TTLSecondsAfterFinished = workload.TTLSecondsAfterFinished
 	job.Spec.Template.Labels = map[string]string{
-		"appdeploy.appdeploy.io/workload": name,
+		"appdeploy.io/workload": name,
 	}
 	if len(job.Spec.Template.Spec.Containers) == 0 {
 		job.Spec.Template.Spec.Containers = []corev1.Container{{Name: name}}
@@ -339,7 +339,7 @@ func (r *AppDeployReconciler) reconcileHeadlessService(ctx context.Context, name
 			Spec: corev1.ServiceSpec{
 				ClusterIP: corev1.ClusterIPNone,
 				Selector: map[string]string{
-					"appdeploy.appdeploy.io/workload": workloadName,
+					"appdeploy.io/workload": workloadName,
 				},
 				Ports: []corev1.ServicePort{{Port: containerPort, TargetPort: intstr.FromInt(int(containerPort)), Protocol: corev1.ProtocolTCP}},
 			},
@@ -351,7 +351,7 @@ func (r *AppDeployReconciler) reconcileHeadlessService(ctx context.Context, name
 	}
 
 	service.Spec.Selector = map[string]string{
-		"appdeploy.appdeploy.io/workload": workloadName,
+		"appdeploy.io/workload": workloadName,
 	}
 	service.Spec.Ports = []corev1.ServicePort{{Port: containerPort, TargetPort: intstr.FromInt(int(containerPort)), Protocol: corev1.ProtocolTCP}}
 

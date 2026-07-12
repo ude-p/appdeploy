@@ -47,6 +47,8 @@ spec:
                     name:
                       minLength: 1
                       type: string
+                    override:
+                      type: boolean
                     scope:
                       minLength: 1
                       type: string
