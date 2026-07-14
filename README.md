@@ -34,6 +34,7 @@ Top-level spec fields:
 - `selectedNamespaces`: optional subset of `namespaces`
 - `configMaps`: config maps to create
 - `secrets`: ESO-backed secrets to fan out
+- `persistentVolumeClaims`: persistent volume claims to create
 - `workloads`: deployments, stateful sets, or jobs to create
 - `ingresses`: ingress resources to create
 
@@ -61,6 +62,14 @@ spec:
       secretStoreName: cluster-vault
       secretStoreKind: ClusterSecretStore
 
+  persistentVolumeClaims:
+    - name: api-data
+      accessModes: [ReadWriteOnce]
+      storageClassName: standard
+      storage:
+        requests:
+          storage: 10Gi
+
   workloads:
     - name: api
       kind: Deployment
@@ -72,6 +81,10 @@ spec:
       imagePullPolicy: IfNotPresent
       envFromConfig: [app-config]
       envFromSecrets: [app-secret]
+      volumeMounts:
+        - name: api-data
+          mountPath: /data
+          persistentVolumeClaimName: api-data
       resources:
         requests:
           cpu: 100m
@@ -136,6 +149,16 @@ The scoped override inherits default keys and only replaces the keys it defines.
 
 `ImagePull` secrets are rendered as `kubernetes.io/dockerconfigjson` secrets.
 
+### Persistent Volume Claims
+
+- `name`: required
+- `scope`: optional
+- `accessModes`: required list, for example `ReadWriteOnce`
+- `storageClassName`: optional
+- `storage`: required Kubernetes resource requests, for example `requests.storage: 10Gi`
+
+An empty `scope` means the PVC is created in every selected namespace.
+
 ### Workloads
 
 - `name`: required
@@ -156,7 +179,7 @@ The scoped override inherits default keys and only replaces the keys it defines.
 - `envFromConfig`: optional list of ConfigMap names
 - `envFromSecrets`: optional list of Secret names
 - `imagePullSecrets`: optional list of Secret names
-- `volumeMounts`: optional list of mounted ConfigMaps or Secrets
+- `volumeMounts`: optional list of mounted ConfigMaps, Secrets, or PersistentVolumeClaims
 - `overrides`: raw patch blob for allowlisted fields not modeled in the typed schema
 
 `containerPort` and `servicePort` are no longer supported. Use `servicePorts` for the Service-facing ports, and set `containerPorts` only when the container listens on different ports:
@@ -190,7 +213,7 @@ containerPorts: [3000, 3443]
 - config map overrides can only replace existing default keys
 - `StatefulSet` workloads require `headlessServiceName`
 - `Job` workloads skip service creation
-- `volumeMounts` must specify exactly one of `configMapName` or `secretName`
+- `volumeMounts` must specify exactly one of `configMapName`, `secretName`, or `persistentVolumeClaimName`
 - `overrides` may only use allowlisted fields and may not collide with schema-managed fields
 
 ## Workflow

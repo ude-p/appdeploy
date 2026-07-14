@@ -83,6 +83,11 @@ func buildVolumes(workload *appdeployv1.AppDeployWorkload) []corev1.Volume {
 				SecretName: mount.SecretName,
 			}
 		}
+		if mount.PersistentVolumeClaimName != "" {
+			volume.VolumeSource.PersistentVolumeClaim = &corev1.PersistentVolumeClaimVolumeSource{
+				ClaimName: mount.PersistentVolumeClaimName,
+			}
+		}
 		volumes = append(volumes, volume)
 	}
 	return volumes

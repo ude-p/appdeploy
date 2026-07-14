@@ -25,6 +25,7 @@ type AppDeployReconciler struct {
 // +kubebuilder:rbac:groups=appdeploy.io,resources=appdeploys/finalizers,verbs=update
 // +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=persistentvolumeclaims,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=apps,resources=statefulsets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;update;patch;delete
@@ -79,6 +80,17 @@ func (r *AppDeployReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			}
 			if secretErr := r.reconcileExternalSecret(ctx, namespace, &secret); secretErr != nil {
 				err = secretErr
+				return ctrl.Result{}, err
+			}
+		}
+
+		for i := range appdeploy.Spec.PersistentVolumeClaims {
+			pvc := appdeploy.Spec.PersistentVolumeClaims[i]
+			if pvc.Scope != "" && pvc.Scope != namespace {
+				continue
+			}
+			if pvcErr := r.reconcilePersistentVolumeClaim(ctx, namespace, &pvc); pvcErr != nil {
+				err = pvcErr
 				return ctrl.Result{}, err
 			}
 		}
@@ -158,6 +170,9 @@ func (r *AppDeployReconciler) validate(appdeploy *appdeployv1.AppDeploy) error {
 	if err := validateConfigMaps(appdeploy.Spec.ConfigMaps, namespaceSet); err != nil {
 		return err
 	}
+	if err := validatePersistentVolumeClaims(appdeploy.Spec.PersistentVolumeClaims, namespaceSet); err != nil {
+		return err
+	}
 
 	for i, workload := range appdeploy.Spec.Workloads {
 		if workload.Scope != "" {
@@ -192,11 +207,18 @@ func (r *AppDeployReconciler) validate(appdeploy *appdeployv1.AppDeploy) error {
 			return fmt.Errorf("spec.workloads[%d].headlessServiceName must be set when kind is StatefulSet", i)
 		}
 		for j, volumeMount := range workload.VolumeMounts {
-			if volumeMount.ConfigMapName == "" && volumeMount.SecretName == "" {
-				return fmt.Errorf("spec.workloads[%d].volumeMounts[%d] must set configMapName or secretName", i, j)
+			sourceCount := 0
+			if volumeMount.ConfigMapName != "" {
+				sourceCount++
 			}
-			if volumeMount.ConfigMapName != "" && volumeMount.SecretName != "" {
-				return fmt.Errorf("spec.workloads[%d].volumeMounts[%d] must not set both configMapName and secretName", i, j)
+			if volumeMount.SecretName != "" {
+				sourceCount++
+			}
+			if volumeMount.PersistentVolumeClaimName != "" {
+				sourceCount++
+			}
+			if sourceCount != 1 {
+				return fmt.Errorf("spec.workloads[%d].volumeMounts[%d] must set exactly one of configMapName, secretName, or persistentVolumeClaimName", i, j)
 			}
 		}
 	}

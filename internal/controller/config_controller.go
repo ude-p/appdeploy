@@ -86,6 +86,42 @@ func validateConfigMaps(configMaps []appdeployv1.AppDeployConfigMap, namespaceSe
 	return nil
 }
 
+func validatePersistentVolumeClaims(pvcs []appdeployv1.AppDeployPersistentVolumeClaim, namespaceSet map[string]struct{}) error {
+	targets := make(map[string]int)
+	defaults := make(map[string]int)
+	scoped := make(map[string]int)
+	for i, pvc := range pvcs {
+		if pvc.Scope != "" {
+			if _, ok := namespaceSet[pvc.Scope]; !ok {
+				return fmt.Errorf("spec.persistentVolumeClaims[%d].scope %q must match one of spec.namespaces", i, pvc.Scope)
+			}
+		}
+		if len(pvc.AccessModes) == 0 {
+			return fmt.Errorf("spec.persistentVolumeClaims[%d].accessModes must not be empty", i)
+		}
+		if storage, ok := pvc.Resources.Requests[corev1.ResourceStorage]; !ok || storage.IsZero() {
+			return fmt.Errorf("spec.persistentVolumeClaims[%d].resources.requests.storage must be set", i)
+		}
+
+		key := pvc.Scope + "/" + pvc.Name
+		if previousIndex, ok := targets[key]; ok {
+			return fmt.Errorf("spec.persistentVolumeClaims[%d] duplicates spec.persistentVolumeClaims[%d] for scope %q and name %q", i, previousIndex, pvc.Scope, pvc.Name)
+		}
+		if pvc.Scope == "" {
+			if previousIndex, ok := scoped[pvc.Name]; ok {
+				return fmt.Errorf("spec.persistentVolumeClaims[%d].name %q duplicates scoped persistent volume claim spec.persistentVolumeClaims[%d]", i, pvc.Name, previousIndex)
+			}
+			defaults[pvc.Name] = i
+		} else if previousIndex, ok := defaults[pvc.Name]; ok {
+			return fmt.Errorf("spec.persistentVolumeClaims[%d].name %q duplicates default persistent volume claim spec.persistentVolumeClaims[%d]", i, pvc.Name, previousIndex)
+		} else {
+			scoped[pvc.Name] = i
+		}
+		targets[key] = i
+	}
+	return nil
+}
+
 func (r *AppDeployReconciler) ensureESOConfigured() error {
 	if r.RESTMapper == nil {
 		return fmt.Errorf("external secrets operator is not configured: rest mapper is unavailable")
@@ -160,6 +196,34 @@ func (r *AppDeployReconciler) reconcileConfigMap(ctx context.Context, namespace 
 	cm.Data = configMap.Data
 
 	return r.Update(ctx, cm)
+}
+
+func (r *AppDeployReconciler) reconcilePersistentVolumeClaim(ctx context.Context, namespace string, pvc *appdeployv1.AppDeployPersistentVolumeClaim) error {
+	claim := &corev1.PersistentVolumeClaim{}
+	key := client.ObjectKey{Name: pvc.Name, Namespace: namespace}
+	err := r.Get(ctx, key, claim)
+	if apierrors.IsNotFound(err) {
+		claim = &corev1.PersistentVolumeClaim{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      pvc.Name,
+				Namespace: namespace,
+			},
+			Spec: corev1.PersistentVolumeClaimSpec{
+				AccessModes: pvc.AccessModes,
+				Resources:   pvc.Resources,
+			},
+		}
+		if pvc.StorageClassName != "" {
+			claim.Spec.StorageClassName = &pvc.StorageClassName
+		}
+		return r.Create(ctx, claim)
+	}
+	if err != nil {
+		return err
+	}
+
+	claim.Spec.Resources = pvc.Resources
+	return r.Update(ctx, claim)
 }
 
 func copyStringMap(values map[string]string) map[string]string {

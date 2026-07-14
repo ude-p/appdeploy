@@ -29,11 +29,12 @@ type AppDeploySpec struct {
 	// +kubebuilder:validation:MinItems=1
 	Namespaces []string `json:"namespaces,omitempty"`
 	// +kubebuilder:validation:MinItems=1
-	SelectedNamespaces []string             `json:"selectedNamespaces,omitempty"`
-	ConfigMaps         []AppDeployConfigMap `json:"configMaps,omitempty"`
-	Secrets            []AppDeploySecret    `json:"secrets,omitempty"`
-	Workloads          []AppDeployWorkload  `json:"workloads,omitempty"`
-	Ingresses          []AppDeployIngress   `json:"ingresses,omitempty"`
+	SelectedNamespaces     []string                         `json:"selectedNamespaces,omitempty"`
+	ConfigMaps             []AppDeployConfigMap             `json:"configMaps,omitempty"`
+	Secrets                []AppDeploySecret                `json:"secrets,omitempty"`
+	PersistentVolumeClaims []AppDeployPersistentVolumeClaim `json:"persistentVolumeClaims,omitempty"`
+	Workloads              []AppDeployWorkload              `json:"workloads,omitempty"`
+	Ingresses              []AppDeployIngress               `json:"ingresses,omitempty"`
 }
 
 type AppDeployConfigMap struct {
@@ -66,6 +67,21 @@ type AppDeploySecret struct {
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:Enum=SecretStore;ClusterSecretStore
 	SecretStoreKind string `json:"secretStoreKind"`
+}
+
+type AppDeployPersistentVolumeClaim struct {
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	Name string `json:"name"`
+	// +kubebuilder:validation:MinLength=1
+	Scope string `json:"scope,omitempty"`
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinItems=1
+	AccessModes []corev1.PersistentVolumeAccessMode `json:"accessModes"`
+	// +kubebuilder:validation:MinLength=1
+	StorageClassName string `json:"storageClassName,omitempty"`
+	// +kubebuilder:validation:Required
+	Resources corev1.VolumeResourceRequirements `json:"resources"`
 }
 
 type AppDeployWorkload struct {
@@ -117,6 +133,8 @@ type AppDeployVolumeMount struct {
 	ConfigMapName string `json:"configMapName,omitempty"`
 	// +kubebuilder:validation:MinLength=1
 	SecretName string `json:"secretName,omitempty"`
+	// +kubebuilder:validation:MinLength=1
+	PersistentVolumeClaimName string `json:"persistentVolumeClaimName,omitempty"`
 }
 
 type AppDeployIngress struct {
