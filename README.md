@@ -66,7 +66,7 @@ spec:
     - name: api-data
       accessModes: [ReadWriteOnce]
       storageClassName: standard
-      storage:
+      resources:
         requests:
           storage: 10Gi
 
@@ -155,7 +155,7 @@ The scoped override inherits default keys and only replaces the keys it defines.
 - `scope`: optional
 - `accessModes`: required list, for example `ReadWriteOnce`
 - `storageClassName`: optional
-- `storage`: required Kubernetes resource requests, for example `requests.storage: 10Gi`
+- `resources`: required Kubernetes volume resource requests, for example `requests.storage: 10Gi`
 
 An empty `scope` means the PVC is created in every selected namespace.
 
