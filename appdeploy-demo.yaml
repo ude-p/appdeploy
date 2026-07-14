@@ -1,0 +1,53 @@
+apiVersion: appdeploy.io/v1
+kind: AppDeploy
+metadata:
+  name: demo-shop
+spec:
+  namespaces: [prod, staging]
+  selectedNamespaces: [staging]
+
+  configMaps:
+    - name: app-config
+      data: {APP_ENV: prod, PORT: "8080"}
+    - name: app-config
+      scope: staging
+      override: true
+      data: {APP_ENV: staging}
+
+  secrets:
+    - name: app-secret
+      remoteKey: secrets/demo-shop/staging/app
+      secretStoreName: cluster-vault
+      secretStoreKind: ClusterSecretStore
+    - name: ghcr-pull
+      type: ImagePull
+      remoteKey: secrets/shared/ghcr
+      secretStoreName: cluster-vault
+      secretStoreKind: ClusterSecretStore
+
+  workloads:
+    - name: web
+      image: ghcr.io/acme/demo-web:v1
+      replicas: 2
+      servicePorts: [8080]
+      imagePullPolicy: Always
+      envFromConfig: [app-config]
+      envFromSecrets: [app-secret]
+      imagePullSecrets: [ghcr-pull]
+      serviceType: ClusterIP
+
+    - name: migrate
+      kind: Job
+      image: ghcr.io/acme/demo-api:v1
+      args: ["npm run migrate"]
+      envFromSecrets: [app-secret]
+
+  ingresses:
+    - name: demo-web
+      className: traefik
+      host: staging.demo.io
+      tlsSecretName: demo-tls
+      rules:
+        - path: /
+          serviceName: web
+          servicePort: 8080

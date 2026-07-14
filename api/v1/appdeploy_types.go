@@ -41,9 +41,9 @@ type AppDeployConfigMap struct {
 	// +kubebuilder:validation:MinLength=1
 	Name string `json:"name"`
 	// +kubebuilder:validation:MinLength=1
-	Scope string            `json:"scope,omitempty"`
-	Override bool           `json:"override,omitempty"`
-	Data  map[string]string `json:"data,omitempty"`
+	Scope    string            `json:"scope,omitempty"`
+	Override bool              `json:"override,omitempty"`
+	Data     map[string]string `json:"data,omitempty"`
 }
 
 type AppDeploySecret struct {
@@ -87,13 +87,15 @@ type AppDeployWorkload struct {
 	// +kubebuilder:validation:Minimum=0
 	BackoffLimit *int32 `json:"backoffLimit,omitempty"`
 	// +kubebuilder:validation:Minimum=0
-	TTLSecondsAfterFinished *int32                      `json:"ttlSecondsAfterFinished,omitempty"`
-	ContainerPort           *int32                      `json:"containerPort,omitempty"`
-	Resources               corev1.ResourceRequirements `json:"resources,omitempty"`
+	TTLSecondsAfterFinished *int32 `json:"ttlSecondsAfterFinished,omitempty"`
+	// ServicePorts are the ports exposed by the Kubernetes Service for other clients to call.
+	ServicePorts []int32 `json:"servicePorts,omitempty"`
+	// ContainerPorts are the ports the application listens on inside the pod container; defaults to servicePorts.
+	ContainerPorts []int32                     `json:"containerPorts,omitempty"`
+	Resources      corev1.ResourceRequirements `json:"resources,omitempty"`
 	// +kubebuilder:validation:Enum=Always;IfNotPresent;Never
 	ImagePullPolicy     string                 `json:"imagePullPolicy,omitempty"`
 	ServiceType         string                 `json:"serviceType,omitempty"`
-	ServicePort         *int32                 `json:"servicePort,omitempty"`
 	HeadlessServiceName string                 `json:"headlessServiceName,omitempty"`
 	EnvFromConfig       []string               `json:"envFromConfig,omitempty"`
 	EnvFromSecrets      []string               `json:"envFromSecrets,omitempty"`
@@ -161,9 +163,9 @@ type AppDeployStatus struct {
 type AppDeploy struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitzero"`
-	Spec              AppDeploySpec   `json:"spec"`
+	Spec              AppDeploySpec `json:"spec"`
 	// +optional
-	Status            AppDeployStatus `json:"status,omitzero"`
+	Status AppDeployStatus `json:"status,omitzero"`
 }
 
 // +kubebuilder:object:root=true

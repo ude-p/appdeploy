@@ -37,6 +37,66 @@ Top-level spec fields:
 - `workloads`: deployments, stateful sets, or jobs to create
 - `ingresses`: ingress resources to create
 
+Example:
+
+```yaml
+apiVersion: appdeploy.io/v1
+kind: AppDeploy
+metadata:
+  name: demo-app
+spec:
+  namespaces: [prod, staging]
+  selectedNamespaces: [staging]
+
+  configMaps:
+    - name: app-config
+      data:
+        APP_ENV: production
+        PORT: "3000"
+
+  secrets:
+    - name: app-secret
+      type: Opaque
+      remoteKey: secrets/demo-app/app
+      secretStoreName: cluster-vault
+      secretStoreKind: ClusterSecretStore
+
+  workloads:
+    - name: api
+      kind: Deployment
+      image: ghcr.io/acme/demo-api:v1
+      replicas: 2
+      serviceType: ClusterIP
+      servicePorts: [80, 443]
+      containerPorts: [3000, 3443]
+      imagePullPolicy: IfNotPresent
+      envFromConfig: [app-config]
+      envFromSecrets: [app-secret]
+      resources:
+        requests:
+          cpu: 100m
+          memory: 128Mi
+        limits:
+          cpu: 500m
+          memory: 512Mi
+
+    - name: migrate
+      kind: Job
+      image: ghcr.io/acme/demo-api:v1
+      args: ["npm", "run", "migrate"]
+      envFromSecrets: [app-secret]
+
+  ingresses:
+    - name: api
+      className: traefik
+      host: api.demo.example
+      tlsSecretName: api-tls
+      rules:
+        - path: /
+          serviceName: api
+          servicePort: 80
+```
+
 ### ConfigMaps
 
 - `name`: required
@@ -83,7 +143,8 @@ The scoped override inherits default keys and only replaces the keys it defines.
 - `scope`: optional
 - `image`: required
 - `replicas`: optional for workloads that run as deployments or stateful sets, defaults to `1`
-- `containerPort`: required for deployments and stateful sets
+- `servicePorts`: optional list of ports exposed by the Kubernetes Service for clients to call
+- `containerPorts`: optional list of ports the application listens on inside the pod container; defaults to `servicePorts`
 - `command`: optional, useful for jobs
 - `args`: optional, useful for jobs
 - `backoffLimit`: optional, useful for jobs
@@ -91,13 +152,19 @@ The scoped override inherits default keys and only replaces the keys it defines.
 - `resources`: optional
 - `imagePullPolicy`: optional
 - `serviceType`: optional
-- `servicePort`: optional, defaults to `containerPort`
 - `headlessServiceName`: required for `StatefulSet`
 - `envFromConfig`: optional list of ConfigMap names
 - `envFromSecrets`: optional list of Secret names
 - `imagePullSecrets`: optional list of Secret names
 - `volumeMounts`: optional list of mounted ConfigMaps or Secrets
 - `overrides`: raw patch blob for allowlisted fields not modeled in the typed schema
+
+`containerPort` and `servicePort` are no longer supported. Use `servicePorts` for the Service-facing ports, and set `containerPorts` only when the container listens on different ports:
+
+```yaml
+servicePorts: [80, 443]
+containerPorts: [3000, 3443]
+```
 
 ### Ingresses
 

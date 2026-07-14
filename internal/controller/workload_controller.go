@@ -30,7 +30,8 @@ func (r *AppDeployReconciler) reconcileDeployment(ctx context.Context, namespace
 	if workload.Replicas != nil {
 		replicas = *workload.Replicas
 	}
-	containerPort := workloadContainerPort(workload)
+	ports := workloadPorts(workload)
+	containerPorts := buildContainerPorts(ports)
 	envFrom := buildEnvFromSources(workload)
 	imagePullSecrets := buildImagePullSecrets(workload)
 	policy := imagePullPolicy(workload)
@@ -70,7 +71,7 @@ func (r *AppDeployReconciler) reconcileDeployment(ctx context.Context, namespace
 								EnvFrom:         envFrom,
 								VolumeMounts:    volumeMounts,
 								Resources:       resources,
-								Ports:           []corev1.ContainerPort{{ContainerPort: containerPort, Protocol: corev1.ProtocolTCP}},
+								Ports:           containerPorts,
 							},
 						},
 						ImagePullSecrets: imagePullSecrets,
@@ -106,7 +107,7 @@ func (r *AppDeployReconciler) reconcileDeployment(ctx context.Context, namespace
 	if err := applyDeploymentOverrides(deployment, workload.Overrides.Raw); err != nil {
 		return err
 	}
-	deployment.Spec.Template.Spec.Containers[0].Ports = []corev1.ContainerPort{{ContainerPort: containerPort, Protocol: corev1.ProtocolTCP}}
+	deployment.Spec.Template.Spec.Containers[0].Ports = containerPorts
 
 	return r.Update(ctx, deployment)
 }
@@ -116,11 +117,8 @@ func (r *AppDeployReconciler) reconcileService(ctx context.Context, namespace st
 		return nil
 	}
 
-	containerPort := workloadContainerPort(workload)
-	servicePort := containerPort
-	if workload.ServicePort != nil {
-		servicePort = *workload.ServicePort
-	}
+	ports := workloadPorts(workload)
+	servicePorts := buildServicePorts(ports)
 
 	service := &corev1.Service{}
 	key := client.ObjectKey{Name: workload.Name, Namespace: namespace}
@@ -136,7 +134,7 @@ func (r *AppDeployReconciler) reconcileService(ctx context.Context, namespace st
 				Selector: map[string]string{
 					"appdeploy.io/workload": workload.Name,
 				},
-				Ports: []corev1.ServicePort{{Port: servicePort, TargetPort: intstr.FromInt(int(containerPort)), Protocol: corev1.ProtocolTCP}},
+				Ports: servicePorts,
 			},
 		}
 		return r.Create(ctx, service)
@@ -151,7 +149,7 @@ func (r *AppDeployReconciler) reconcileService(ctx context.Context, namespace st
 	service.Spec.Selector = map[string]string{
 		"appdeploy.io/workload": workload.Name,
 	}
-	service.Spec.Ports = []corev1.ServicePort{{Port: servicePort, TargetPort: intstr.FromInt(int(containerPort)), Protocol: corev1.ProtocolTCP}}
+	service.Spec.Ports = servicePorts
 
 	return r.Update(ctx, service)
 }
@@ -162,7 +160,9 @@ func (r *AppDeployReconciler) reconcileStatefulSet(ctx context.Context, namespac
 	if workload.Replicas != nil {
 		replicas = *workload.Replicas
 	}
-	containerPort := workloadContainerPort(workload)
+	ports := workloadPorts(workload)
+	containerPorts := buildContainerPorts(ports)
+	servicePorts := buildServicePorts(ports)
 	envFrom := buildEnvFromSources(workload)
 	imagePullSecrets := buildImagePullSecrets(workload)
 	policy := imagePullPolicy(workload)
@@ -175,7 +175,7 @@ func (r *AppDeployReconciler) reconcileStatefulSet(ctx context.Context, namespac
 		serviceName = name
 	}
 
-	if err := r.reconcileHeadlessService(ctx, namespace, serviceName, name, containerPort); err != nil {
+	if err := r.reconcileHeadlessService(ctx, namespace, serviceName, name, servicePorts); err != nil {
 		return err
 	}
 
@@ -211,7 +211,7 @@ func (r *AppDeployReconciler) reconcileStatefulSet(ctx context.Context, namespac
 								EnvFrom:         envFrom,
 								VolumeMounts:    volumeMounts,
 								Resources:       resources,
-								Ports:           []corev1.ContainerPort{{ContainerPort: containerPort, Protocol: corev1.ProtocolTCP}},
+								Ports:           containerPorts,
 							},
 						},
 						ImagePullSecrets: imagePullSecrets,
@@ -241,7 +241,7 @@ func (r *AppDeployReconciler) reconcileStatefulSet(ctx context.Context, namespac
 	statefulSet.Spec.Template.Spec.Containers[0].Resources = resources
 	statefulSet.Spec.Template.Spec.ImagePullSecrets = imagePullSecrets
 	statefulSet.Spec.Template.Spec.Volumes = volumes
-	statefulSet.Spec.Template.Spec.Containers[0].Ports = []corev1.ContainerPort{{ContainerPort: containerPort, Protocol: corev1.ProtocolTCP}}
+	statefulSet.Spec.Template.Spec.Containers[0].Ports = containerPorts
 
 	return r.Update(ctx, statefulSet)
 }
@@ -326,7 +326,7 @@ func (r *AppDeployReconciler) reconcileJob(ctx context.Context, namespace string
 	return r.Update(ctx, job)
 }
 
-func (r *AppDeployReconciler) reconcileHeadlessService(ctx context.Context, namespace, serviceName, workloadName string, containerPort int32) error {
+func (r *AppDeployReconciler) reconcileHeadlessService(ctx context.Context, namespace, serviceName, workloadName string, servicePorts []corev1.ServicePort) error {
 	service := &corev1.Service{}
 	key := client.ObjectKey{Name: serviceName, Namespace: namespace}
 	err := r.Get(ctx, key, service)
@@ -341,7 +341,7 @@ func (r *AppDeployReconciler) reconcileHeadlessService(ctx context.Context, name
 				Selector: map[string]string{
 					"appdeploy.io/workload": workloadName,
 				},
-				Ports: []corev1.ServicePort{{Port: containerPort, TargetPort: intstr.FromInt(int(containerPort)), Protocol: corev1.ProtocolTCP}},
+				Ports: servicePorts,
 			},
 		}
 		return r.Create(ctx, service)
@@ -353,16 +353,58 @@ func (r *AppDeployReconciler) reconcileHeadlessService(ctx context.Context, name
 	service.Spec.Selector = map[string]string{
 		"appdeploy.io/workload": workloadName,
 	}
-	service.Spec.Ports = []corev1.ServicePort{{Port: containerPort, TargetPort: intstr.FromInt(int(containerPort)), Protocol: corev1.ProtocolTCP}}
+	service.Spec.Ports = servicePorts
 
 	return r.Update(ctx, service)
 }
 
-func workloadContainerPort(workload *appdeployv1.AppDeployWorkload) int32 {
-	if workload.ContainerPort == nil {
-		return 0
+type workloadPort struct {
+	servicePort   int32
+	containerPort int32
+}
+
+func workloadPorts(workload *appdeployv1.AppDeployWorkload) []workloadPort {
+	ports := make([]workloadPort, len(workload.ServicePorts))
+	for i, servicePort := range workload.ServicePorts {
+		containerPort := servicePort
+		if len(workload.ContainerPorts) > 0 {
+			containerPort = workload.ContainerPorts[i]
+		}
+		ports[i] = workloadPort{
+			servicePort:   servicePort,
+			containerPort: containerPort,
+		}
 	}
-	return *workload.ContainerPort
+	return ports
+}
+
+func buildContainerPorts(ports []workloadPort) []corev1.ContainerPort {
+	containerPorts := make([]corev1.ContainerPort, 0, len(ports))
+	seen := make(map[int32]struct{}, len(ports))
+	for _, port := range ports {
+		if _, ok := seen[port.containerPort]; ok {
+			continue
+		}
+		seen[port.containerPort] = struct{}{}
+		containerPorts = append(containerPorts, corev1.ContainerPort{
+			ContainerPort: port.containerPort,
+			Protocol:      corev1.ProtocolTCP,
+		})
+	}
+	return containerPorts
+}
+
+func buildServicePorts(ports []workloadPort) []corev1.ServicePort {
+	servicePorts := make([]corev1.ServicePort, 0, len(ports))
+	for _, port := range ports {
+		servicePorts = append(servicePorts, corev1.ServicePort{
+			Name:       fmt.Sprintf("port-%d", port.servicePort),
+			Port:       port.servicePort,
+			TargetPort: intstr.FromInt(int(port.containerPort)),
+			Protocol:   corev1.ProtocolTCP,
+		})
+	}
+	return servicePorts
 }
 
 func applyDeploymentOverrides(deployment *appsv1.Deployment, raw []byte) error {

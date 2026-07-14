@@ -265,17 +265,17 @@ func (in *AppDeployWorkload) DeepCopyInto(out *AppDeployWorkload) {
 		*out = new(int32)
 		**out = **in
 	}
-	if in.ContainerPort != nil {
-		in, out := &in.ContainerPort, &out.ContainerPort
-		*out = new(int32)
-		**out = **in
+	if in.ServicePorts != nil {
+		in, out := &in.ServicePorts, &out.ServicePorts
+		*out = make([]int32, len(*in))
+		copy(*out, *in)
+	}
+	if in.ContainerPorts != nil {
+		in, out := &in.ContainerPorts, &out.ContainerPorts
+		*out = make([]int32, len(*in))
+		copy(*out, *in)
 	}
 	in.Resources.DeepCopyInto(&out.Resources)
-	if in.ServicePort != nil {
-		in, out := &in.ServicePort, &out.ServicePort
-		*out = new(int32)
-		**out = **in
-	}
 	if in.EnvFromConfig != nil {
 		in, out := &in.EnvFromConfig, &out.EnvFromConfig
 		*out = make([]string, len(*in))

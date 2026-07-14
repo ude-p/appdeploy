@@ -165,8 +165,28 @@ func (r *AppDeployReconciler) validate(appdeploy *appdeployv1.AppDeploy) error {
 				return fmt.Errorf("spec.workloads[%d].scope %q must match one of spec.namespaces", i, workload.Scope)
 			}
 		}
-		if workload.Kind != "Job" && workload.ContainerPort == nil {
-			return fmt.Errorf("spec.workloads[%d].containerPort must be set when kind is %q", i, workload.Kind)
+		if workload.Kind != "Job" {
+			if len(workload.ServicePorts) == 0 {
+				return fmt.Errorf("spec.workloads[%d].servicePorts must be set when kind is %q", i, workload.Kind)
+			}
+			if len(workload.ContainerPorts) > 0 && len(workload.ContainerPorts) != len(workload.ServicePorts) {
+				return fmt.Errorf("spec.workloads[%d].containerPorts must have the same length as servicePorts", i)
+			}
+			servicePorts := make(map[int32]struct{}, len(workload.ServicePorts))
+			for j, servicePort := range workload.ServicePorts {
+				if servicePort < 1 || servicePort > 65535 {
+					return fmt.Errorf("spec.workloads[%d].servicePorts[%d] must be between 1 and 65535", i, j)
+				}
+				if _, ok := servicePorts[servicePort]; ok {
+					return fmt.Errorf("spec.workloads[%d].servicePorts[%d] duplicates port %d", i, j, servicePort)
+				}
+				servicePorts[servicePort] = struct{}{}
+			}
+			for j, containerPort := range workload.ContainerPorts {
+				if containerPort < 1 || containerPort > 65535 {
+					return fmt.Errorf("spec.workloads[%d].containerPorts[%d] must be between 1 and 65535", i, j)
+				}
+			}
 		}
 		if workload.Kind == "StatefulSet" && workload.HeadlessServiceName == "" {
 			return fmt.Errorf("spec.workloads[%d].headlessServiceName must be set when kind is StatefulSet", i)

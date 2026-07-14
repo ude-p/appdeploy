@@ -166,9 +166,13 @@ spec:
                       items:
                         type: string
                       type: array
-                    containerPort:
-                      format: int32
-                      type: integer
+                    containerPorts:
+                      description: ContainerPorts are the ports the application listens
+                        on inside the pod container; defaults to servicePorts.
+                      items:
+                        format: int32
+                        type: integer
+                      type: array
                     envFromConfig:
                       items:
                         type: string
@@ -272,9 +276,13 @@ spec:
                     scope:
                       minLength: 1
                       type: string
-                    servicePort:
-                      format: int32
-                      type: integer
+                    servicePorts:
+                      description: ServicePorts are the ports exposed by the Kubernetes
+                        Service for other clients to call.
+                      items:
+                        format: int32
+                        type: integer
+                      type: array
                     serviceType:
                       type: string
                     ttlSecondsAfterFinished:
