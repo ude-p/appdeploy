@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -206,6 +207,22 @@ func (r *AppDeployReconciler) validate(appdeploy *appdeployv1.AppDeploy) error {
 		if workload.Kind == "StatefulSet" && workload.HeadlessServiceName == "" {
 			return fmt.Errorf("spec.workloads[%d].headlessServiceName must be set when kind is StatefulSet", i)
 		}
+		volumeClaimTemplateNames := make(map[string]struct{}, len(workload.VolumeClaimTemplates))
+		if len(workload.VolumeClaimTemplates) > 0 && workload.Kind != "StatefulSet" {
+			return fmt.Errorf("spec.workloads[%d].volumeClaimTemplates can only be set when kind is StatefulSet", i)
+		}
+		for j, template := range workload.VolumeClaimTemplates {
+			if len(template.AccessModes) == 0 {
+				return fmt.Errorf("spec.workloads[%d].volumeClaimTemplates[%d].accessModes must not be empty", i, j)
+			}
+			if storage, ok := template.Resources.Requests[corev1.ResourceStorage]; !ok || storage.IsZero() {
+				return fmt.Errorf("spec.workloads[%d].volumeClaimTemplates[%d].resources.requests.storage must be set", i, j)
+			}
+			if _, ok := volumeClaimTemplateNames[template.Name]; ok {
+				return fmt.Errorf("spec.workloads[%d].volumeClaimTemplates[%d] duplicates name %q", i, j, template.Name)
+			}
+			volumeClaimTemplateNames[template.Name] = struct{}{}
+		}
 		for j, volumeMount := range workload.VolumeMounts {
 			sourceCount := 0
 			if volumeMount.ConfigMapName != "" {
@@ -217,9 +234,17 @@ func (r *AppDeployReconciler) validate(appdeploy *appdeployv1.AppDeploy) error {
 			if volumeMount.PersistentVolumeClaimName != "" {
 				sourceCount++
 			}
-			if sourceCount != 1 {
-				return fmt.Errorf("spec.workloads[%d].volumeMounts[%d] must set exactly one of configMapName, secretName, or persistentVolumeClaimName", i, j)
+			_, usesVolumeClaimTemplate := volumeClaimTemplateNames[volumeMount.Name]
+			if sourceCount == 0 && usesVolumeClaimTemplate {
+				continue
 			}
+			if sourceCount == 1 && !usesVolumeClaimTemplate {
+				continue
+			}
+			if usesVolumeClaimTemplate {
+				return fmt.Errorf("spec.workloads[%d].volumeMounts[%d] uses volumeClaimTemplate %q and must not set configMapName, secretName, or persistentVolumeClaimName", i, j, volumeMount.Name)
+			}
+			return fmt.Errorf("spec.workloads[%d].volumeMounts[%d] must set exactly one of configMapName, secretName, persistentVolumeClaimName, or use a volumeClaimTemplates name", i, j)
 		}
 	}
 

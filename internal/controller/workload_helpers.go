@@ -2,6 +2,7 @@ package controller
 
 import (
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	appdeployv1 "github.com/ude-p/appdeploy/api/v1"
 )
@@ -91,4 +92,28 @@ func buildVolumes(workload *appdeployv1.AppDeployWorkload) []corev1.Volume {
 		volumes = append(volumes, volume)
 	}
 	return volumes
+}
+
+func buildVolumeClaimTemplates(workload *appdeployv1.AppDeployWorkload) []corev1.PersistentVolumeClaim {
+	if len(workload.VolumeClaimTemplates) == 0 {
+		return nil
+	}
+
+	templates := make([]corev1.PersistentVolumeClaim, 0, len(workload.VolumeClaimTemplates))
+	for _, template := range workload.VolumeClaimTemplates {
+		claim := corev1.PersistentVolumeClaim{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: template.Name,
+			},
+			Spec: corev1.PersistentVolumeClaimSpec{
+				AccessModes: template.AccessModes,
+				Resources: template.Resources,
+			},
+		}
+		if template.StorageClassName != "" {
+			claim.Spec.StorageClassName = &template.StorageClassName
+		}
+		templates = append(templates, claim)
+	}
+	return templates
 }

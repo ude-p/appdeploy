@@ -56,7 +56,7 @@ func (r *AppDeployReconciler) reconcileDeployment(ctx context.Context, namespace
 						"appdeploy.io/workload": name,
 					},
 				},
-				Template: corev1.PodTemplateSpec{
+					Template: corev1.PodTemplateSpec{
 					ObjectMeta: metav1.ObjectMeta{
 						Labels: map[string]string{
 							"appdeploy.io/workload": name,
@@ -168,6 +168,7 @@ func (r *AppDeployReconciler) reconcileStatefulSet(ctx context.Context, namespac
 	policy := imagePullPolicy(workload)
 	volumeMounts := buildVolumeMounts(workload)
 	volumes := buildVolumes(workload)
+	volumeClaimTemplates := buildVolumeClaimTemplates(workload)
 	resources := workload.Resources
 
 	serviceName := workload.HeadlessServiceName
@@ -188,15 +189,16 @@ func (r *AppDeployReconciler) reconcileStatefulSet(ctx context.Context, namespac
 				Name:      name,
 				Namespace: namespace,
 			},
-			Spec: appsv1.StatefulSetSpec{
-				ServiceName: serviceName,
-				Replicas:    &replicas,
-				Selector: &metav1.LabelSelector{
+				Spec: appsv1.StatefulSetSpec{
+					ServiceName: serviceName,
+					Replicas:    &replicas,
+					Selector: &metav1.LabelSelector{
 					MatchLabels: map[string]string{
-						"appdeploy.io/workload": name,
+							"appdeploy.io/workload": name,
+						},
 					},
-				},
-				Template: corev1.PodTemplateSpec{
+					VolumeClaimTemplates: volumeClaimTemplates,
+					Template: corev1.PodTemplateSpec{
 					ObjectMeta: metav1.ObjectMeta{
 						Labels: map[string]string{
 							"appdeploy.io/workload": name,
@@ -242,6 +244,7 @@ func (r *AppDeployReconciler) reconcileStatefulSet(ctx context.Context, namespac
 	statefulSet.Spec.Template.Spec.ImagePullSecrets = imagePullSecrets
 	statefulSet.Spec.Template.Spec.Volumes = volumes
 	statefulSet.Spec.Template.Spec.Containers[0].Ports = containerPorts
+	statefulSet.Spec.VolumeClaimTemplates = volumeClaimTemplates
 
 	return r.Update(ctx, statefulSet)
 }

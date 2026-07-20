@@ -84,6 +84,19 @@ type AppDeployPersistentVolumeClaim struct {
 	Resources corev1.VolumeResourceRequirements `json:"resources"`
 }
 
+type AppDeployVolumeClaimTemplate struct {
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	Name string `json:"name"`
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinItems=1
+	AccessModes []corev1.PersistentVolumeAccessMode `json:"accessModes"`
+	// +kubebuilder:validation:MinLength=1
+	StorageClassName string `json:"storageClassName,omitempty"`
+	// +kubebuilder:validation:Required
+	Resources corev1.VolumeResourceRequirements `json:"resources"`
+}
+
 type AppDeployWorkload struct {
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
@@ -110,13 +123,14 @@ type AppDeployWorkload struct {
 	ContainerPorts []int32                     `json:"containerPorts,omitempty"`
 	Resources      corev1.ResourceRequirements `json:"resources,omitempty"`
 	// +kubebuilder:validation:Enum=Always;IfNotPresent;Never
-	ImagePullPolicy     string                 `json:"imagePullPolicy,omitempty"`
-	ServiceType         string                 `json:"serviceType,omitempty"`
-	HeadlessServiceName string                 `json:"headlessServiceName,omitempty"`
-	EnvFromConfig       []string               `json:"envFromConfig,omitempty"`
-	EnvFromSecrets      []string               `json:"envFromSecrets,omitempty"`
-	ImagePullSecrets    []string               `json:"imagePullSecrets,omitempty"`
-	VolumeMounts        []AppDeployVolumeMount `json:"volumeMounts,omitempty"`
+	ImagePullPolicy      string                         `json:"imagePullPolicy,omitempty"`
+	ServiceType          string                         `json:"serviceType,omitempty"`
+	HeadlessServiceName  string                         `json:"headlessServiceName,omitempty"`
+	EnvFromConfig        []string                       `json:"envFromConfig,omitempty"`
+	EnvFromSecrets       []string                       `json:"envFromSecrets,omitempty"`
+	ImagePullSecrets     []string                       `json:"imagePullSecrets,omitempty"`
+	VolumeMounts         []AppDeployVolumeMount         `json:"volumeMounts,omitempty"`
+	VolumeClaimTemplates []AppDeployVolumeClaimTemplate `json:"volumeClaimTemplates,omitempty"`
 	// +kubebuilder:pruning:PreserveUnknownFields
 	// +kubebuilder:validation:Type=object
 	Overrides apiextensionsv1.JSON `json:"overrides,omitempty"`

@@ -99,6 +99,24 @@ spec:
       args: ["npm", "run", "migrate"]
       envFromSecrets: [app-secret]
 
+    - name: postgres
+      kind: StatefulSet
+      image: postgres:16
+      replicas: 1
+      serviceType: ClusterIP
+      servicePorts: [5432]
+      headlessServiceName: postgres
+      volumeClaimTemplates:
+        - name: postgres-data
+          accessModes: [ReadWriteOnce]
+          storageClassName: standard
+          resources:
+            requests:
+              storage: 10Gi
+      volumeMounts:
+        - name: postgres-data
+          mountPath: /var/lib/postgresql/data
+
   ingresses:
     - name: api
       className: traefik
@@ -159,6 +177,8 @@ The scoped override inherits default keys and only replaces the keys it defines.
 
 An empty `scope` means the PVC is created in every selected namespace.
 
+Use top-level `persistentVolumeClaims` when a workload should mount a named PVC directly with `persistentVolumeClaimName`.
+
 ### Workloads
 
 - `name`: required
@@ -180,6 +200,7 @@ An empty `scope` means the PVC is created in every selected namespace.
 - `envFromSecrets`: optional list of Secret names
 - `imagePullSecrets`: optional list of Secret names
 - `volumeMounts`: optional list of mounted ConfigMaps, Secrets, or PersistentVolumeClaims
+- `volumeClaimTemplates`: optional list of StatefulSet PVC templates
 - `overrides`: raw patch blob for allowlisted fields not modeled in the typed schema
 
 `containerPort` and `servicePort` are no longer supported. Use `servicePorts` for the Service-facing ports, and set `containerPorts` only when the container listens on different ports:
@@ -187,6 +208,21 @@ An empty `scope` means the PVC is created in every selected namespace.
 ```yaml
 servicePorts: [80, 443]
 containerPorts: [3000, 3443]
+```
+
+For StatefulSets, `volumeClaimTemplates` creates one PVC per pod. The `volumeMounts[].name` must match the template name:
+
+```yaml
+kind: StatefulSet
+volumeClaimTemplates:
+  - name: postgres-data
+    accessModes: [ReadWriteOnce]
+    resources:
+      requests:
+        storage: 10Gi
+volumeMounts:
+  - name: postgres-data
+    mountPath: /var/lib/postgresql/data
 ```
 
 ### Ingresses
@@ -212,8 +248,9 @@ containerPorts: [3000, 3443]
 - config map overrides require a default config map with the same name
 - config map overrides can only replace existing default keys
 - `StatefulSet` workloads require `headlessServiceName`
+- `volumeClaimTemplates` can only be used by `StatefulSet` workloads
 - `Job` workloads skip service creation
-- `volumeMounts` must specify exactly one of `configMapName`, `secretName`, or `persistentVolumeClaimName`
+- `volumeMounts` must specify exactly one of `configMapName`, `secretName`, or `persistentVolumeClaimName`, unless the mount name matches a `volumeClaimTemplates` name
 - `overrides` may only use allowlisted fields and may not collide with schema-managed fields
 
 ## Workflow
