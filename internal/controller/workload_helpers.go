@@ -69,8 +69,19 @@ func buildVolumes(workload *appdeployv1.AppDeployWorkload) []corev1.Volume {
 		return nil
 	}
 
+	volumeClaimTemplateNames := make(map[string]struct{}, len(workload.VolumeClaimTemplates))
+	for _, template := range workload.VolumeClaimTemplates {
+		volumeClaimTemplateNames[template.Name] = struct{}{}
+	}
+
 	volumes := make([]corev1.Volume, 0, len(workload.VolumeMounts))
 	for _, mount := range workload.VolumeMounts {
+		if mount.ConfigMapName == "" && mount.SecretName == "" && mount.PersistentVolumeClaimName == "" {
+			if _, ok := volumeClaimTemplateNames[mount.Name]; ok {
+				continue
+			}
+		}
+
 		volume := corev1.Volume{
 			Name: mount.Name,
 		}
