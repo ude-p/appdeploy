@@ -81,6 +81,17 @@ spec:
       imagePullPolicy: IfNotPresent
       envFromConfig: [app-config]
       envFromSecrets: [app-secret]
+      readinessProbe:
+        httpGet:
+          path: /ready
+          port: 3000
+        periodSeconds: 10
+      livenessProbe:
+        httpGet:
+          path: /health
+          port: 3000
+        initialDelaySeconds: 15
+        periodSeconds: 20
       volumeMounts:
         - name: api-data
           mountPath: /data
@@ -193,6 +204,9 @@ Use top-level `persistentVolumeClaims` when a workload should mount a named PVC 
 - `backoffLimit`: optional, useful for jobs
 - `ttlSecondsAfterFinished`: optional, useful for jobs
 - `resources`: optional
+- `livenessProbe`: optional Kubernetes container liveness probe
+- `readinessProbe`: optional Kubernetes container readiness probe
+- `startupProbe`: optional Kubernetes container startup probe
 - `imagePullPolicy`: optional
 - `serviceType`: optional
 - `headlessServiceName`: required for `StatefulSet`

@@ -38,6 +38,9 @@ func (r *AppDeployReconciler) reconcileDeployment(ctx context.Context, namespace
 	volumeMounts := buildVolumeMounts(workload)
 	volumes := buildVolumes(workload)
 	resources := workload.Resources
+	livenessProbe := workload.LivenessProbe
+	readinessProbe := workload.ReadinessProbe
+	startupProbe := workload.StartupProbe
 
 	deployment := &appsv1.Deployment{}
 	key := client.ObjectKey{Name: name, Namespace: namespace}
@@ -56,7 +59,7 @@ func (r *AppDeployReconciler) reconcileDeployment(ctx context.Context, namespace
 						"appdeploy.io/workload": name,
 					},
 				},
-					Template: corev1.PodTemplateSpec{
+				Template: corev1.PodTemplateSpec{
 					ObjectMeta: metav1.ObjectMeta{
 						Labels: map[string]string{
 							"appdeploy.io/workload": name,
@@ -71,6 +74,9 @@ func (r *AppDeployReconciler) reconcileDeployment(ctx context.Context, namespace
 								EnvFrom:         envFrom,
 								VolumeMounts:    volumeMounts,
 								Resources:       resources,
+								LivenessProbe:   livenessProbe,
+								ReadinessProbe:  readinessProbe,
+								StartupProbe:    startupProbe,
 								Ports:           containerPorts,
 							},
 						},
@@ -102,6 +108,9 @@ func (r *AppDeployReconciler) reconcileDeployment(ctx context.Context, namespace
 	deployment.Spec.Template.Spec.Containers[0].EnvFrom = envFrom
 	deployment.Spec.Template.Spec.Containers[0].VolumeMounts = volumeMounts
 	deployment.Spec.Template.Spec.Containers[0].Resources = resources
+	deployment.Spec.Template.Spec.Containers[0].LivenessProbe = livenessProbe
+	deployment.Spec.Template.Spec.Containers[0].ReadinessProbe = readinessProbe
+	deployment.Spec.Template.Spec.Containers[0].StartupProbe = startupProbe
 	deployment.Spec.Template.Spec.ImagePullSecrets = imagePullSecrets
 	deployment.Spec.Template.Spec.Volumes = volumes
 	if err := applyDeploymentOverrides(deployment, workload.Overrides.Raw); err != nil {
@@ -170,6 +179,9 @@ func (r *AppDeployReconciler) reconcileStatefulSet(ctx context.Context, namespac
 	volumes := buildVolumes(workload)
 	volumeClaimTemplates := buildVolumeClaimTemplates(workload)
 	resources := workload.Resources
+	livenessProbe := workload.LivenessProbe
+	readinessProbe := workload.ReadinessProbe
+	startupProbe := workload.StartupProbe
 
 	serviceName := workload.HeadlessServiceName
 	if serviceName == "" {
@@ -189,16 +201,16 @@ func (r *AppDeployReconciler) reconcileStatefulSet(ctx context.Context, namespac
 				Name:      name,
 				Namespace: namespace,
 			},
-				Spec: appsv1.StatefulSetSpec{
-					ServiceName: serviceName,
-					Replicas:    &replicas,
-					Selector: &metav1.LabelSelector{
+			Spec: appsv1.StatefulSetSpec{
+				ServiceName: serviceName,
+				Replicas:    &replicas,
+				Selector: &metav1.LabelSelector{
 					MatchLabels: map[string]string{
-							"appdeploy.io/workload": name,
-						},
+						"appdeploy.io/workload": name,
 					},
-					VolumeClaimTemplates: volumeClaimTemplates,
-					Template: corev1.PodTemplateSpec{
+				},
+				VolumeClaimTemplates: volumeClaimTemplates,
+				Template: corev1.PodTemplateSpec{
 					ObjectMeta: metav1.ObjectMeta{
 						Labels: map[string]string{
 							"appdeploy.io/workload": name,
@@ -213,6 +225,9 @@ func (r *AppDeployReconciler) reconcileStatefulSet(ctx context.Context, namespac
 								EnvFrom:         envFrom,
 								VolumeMounts:    volumeMounts,
 								Resources:       resources,
+								LivenessProbe:   livenessProbe,
+								ReadinessProbe:  readinessProbe,
+								StartupProbe:    startupProbe,
 								Ports:           containerPorts,
 							},
 						},
@@ -241,6 +256,9 @@ func (r *AppDeployReconciler) reconcileStatefulSet(ctx context.Context, namespac
 	statefulSet.Spec.Template.Spec.Containers[0].EnvFrom = envFrom
 	statefulSet.Spec.Template.Spec.Containers[0].VolumeMounts = volumeMounts
 	statefulSet.Spec.Template.Spec.Containers[0].Resources = resources
+	statefulSet.Spec.Template.Spec.Containers[0].LivenessProbe = livenessProbe
+	statefulSet.Spec.Template.Spec.Containers[0].ReadinessProbe = readinessProbe
+	statefulSet.Spec.Template.Spec.Containers[0].StartupProbe = startupProbe
 	statefulSet.Spec.Template.Spec.ImagePullSecrets = imagePullSecrets
 	statefulSet.Spec.Template.Spec.Volumes = volumes
 	statefulSet.Spec.Template.Spec.Containers[0].Ports = containerPorts
@@ -261,6 +279,9 @@ func (r *AppDeployReconciler) reconcileJob(ctx context.Context, namespace string
 	volumeMounts := buildVolumeMounts(workload)
 	volumes := buildVolumes(workload)
 	resources := workload.Resources
+	livenessProbe := workload.LivenessProbe
+	readinessProbe := workload.ReadinessProbe
+	startupProbe := workload.StartupProbe
 
 	job := &batchv1.Job{}
 	key := client.ObjectKey{Name: name, Namespace: namespace}
@@ -294,6 +315,9 @@ func (r *AppDeployReconciler) reconcileJob(ctx context.Context, namespace string
 								EnvFrom:         envFrom,
 								VolumeMounts:    volumeMounts,
 								Resources:       resources,
+								LivenessProbe:   livenessProbe,
+								ReadinessProbe:  readinessProbe,
+								StartupProbe:    startupProbe,
 							},
 						},
 					},
@@ -325,6 +349,9 @@ func (r *AppDeployReconciler) reconcileJob(ctx context.Context, namespace string
 	job.Spec.Template.Spec.Containers[0].EnvFrom = envFrom
 	job.Spec.Template.Spec.Containers[0].VolumeMounts = volumeMounts
 	job.Spec.Template.Spec.Containers[0].Resources = resources
+	job.Spec.Template.Spec.Containers[0].LivenessProbe = livenessProbe
+	job.Spec.Template.Spec.Containers[0].ReadinessProbe = readinessProbe
+	job.Spec.Template.Spec.Containers[0].StartupProbe = startupProbe
 
 	return r.Update(ctx, job)
 }

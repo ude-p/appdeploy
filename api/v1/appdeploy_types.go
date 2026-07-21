@@ -122,6 +122,9 @@ type AppDeployWorkload struct {
 	// ContainerPorts are the ports the application listens on inside the pod container; defaults to servicePorts.
 	ContainerPorts []int32                     `json:"containerPorts,omitempty"`
 	Resources      corev1.ResourceRequirements `json:"resources,omitempty"`
+	LivenessProbe  *corev1.Probe               `json:"livenessProbe,omitempty"`
+	ReadinessProbe *corev1.Probe               `json:"readinessProbe,omitempty"`
+	StartupProbe   *corev1.Probe               `json:"startupProbe,omitempty"`
 	// +kubebuilder:validation:Enum=Always;IfNotPresent;Never
 	ImagePullPolicy      string                         `json:"imagePullPolicy,omitempty"`
 	ServiceType          string                         `json:"serviceType,omitempty"`
