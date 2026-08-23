@@ -16,11 +16,30 @@ func buildIngresses(model config.Model, namespace string) ([]client.Object, erro
 		if err != nil {
 			return nil, fmt.Errorf("route %q: %w", route.Name, err)
 		}
-		port, err := appServicePort(model.Apps, appName)
+		appPorts, err := appServicePorts(model.Apps, appName)
 		if err != nil {
 			return nil, fmt.Errorf("route %q: %w", route.Name, err)
 		}
 		prefix := networkingv1.PathTypePrefix
+		paths := route.Paths
+		if len(paths) == 0 {
+			paths = []config.RoutePath{{Path: "/"}}
+		}
+		ingressPaths := make([]networkingv1.HTTPIngressPath, 0, len(paths))
+		for _, path := range paths {
+			port := appPorts[0]
+			if path.Port != nil {
+				port = *path.Port
+			}
+			ingressPaths = append(ingressPaths, networkingv1.HTTPIngressPath{
+				Path:     path.Path,
+				PathType: &prefix,
+				Backend: networkingv1.IngressBackend{Service: &networkingv1.IngressServiceBackend{
+					Name: appName,
+					Port: networkingv1.ServiceBackendPort{Number: port},
+				}},
+			})
+		}
 
 		ingress := &networkingv1.Ingress{
 			ObjectMeta: metav1.ObjectMeta{Name: route.Name, Namespace: namespace},
@@ -28,17 +47,13 @@ func buildIngresses(model config.Model, namespace string) ([]client.Object, erro
 				Rules: []networkingv1.IngressRule{{
 					Host: route.Host,
 					IngressRuleValue: networkingv1.IngressRuleValue{
-						HTTP: &networkingv1.HTTPIngressRuleValue{Paths: []networkingv1.HTTPIngressPath{{
-							Path:     "/",
-							PathType: &prefix,
-							Backend: networkingv1.IngressBackend{Service: &networkingv1.IngressServiceBackend{
-								Name: appName,
-								Port: networkingv1.ServiceBackendPort{Number: port},
-							}},
-						}}},
+						HTTP: &networkingv1.HTTPIngressRuleValue{Paths: ingressPaths},
 					},
 				}},
 			},
+		}
+		if route.ClassName != "" {
+			ingress.Spec.IngressClassName = &route.ClassName
 		}
 		if len(route.Annotations) > 0 {
 			ingress.Annotations = route.Annotations
@@ -54,11 +69,15 @@ func buildIngresses(model config.Model, namespace string) ([]client.Object, erro
 	return objects, nil
 }
 
-func appServicePort(apps []config.App, name string) (int32, error) {
+func appServicePorts(apps []config.App, name string) ([]int32, error) {
 	for _, app := range apps {
 		if app.Name == name && len(app.Ports) > 0 {
-			return app.Ports[0].Service, nil
+			ports := make([]int32, 0, len(app.Ports))
+			for _, port := range app.Ports {
+				ports = append(ports, port.Service)
+			}
+			return ports, nil
 		}
 	}
-	return 0, fmt.Errorf("app %q has no service port", name)
+	return nil, fmt.Errorf("app %q has no service port", name)
 }

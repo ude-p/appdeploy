@@ -23,6 +23,9 @@ func buildConfigMaps(model config.Model, namespace string) ([]client.Object, err
 		if err != nil {
 			return nil, fmt.Errorf("config %q: %w", item.Name, err)
 		}
+		if err := mergeEnvSource(model, item.Env, data); err != nil {
+			return nil, fmt.Errorf("config %q: %w", item.Name, err)
+		}
 		for _, file := range item.Files {
 			contents, err := os.ReadFile(sourcePath(model, file.Source))
 			if err != nil {
@@ -31,11 +34,21 @@ func buildConfigMaps(model config.Model, namespace string) ([]client.Object, err
 			data[file.Name] = string(contents)
 		}
 		if item.Scope != nil && item.Scope.Namespace == namespace {
+			if err := mergeEnvSource(model, item.Scope.Env, data); err != nil {
+				return nil, fmt.Errorf("config %q scope %q: %w", item.Name, namespace, err)
+			}
 			overrides, err := configData(item.Scope.Values)
 			if err != nil {
 				return nil, fmt.Errorf("config %q scope %q: %w", item.Name, namespace, err)
 			}
 			maps.Copy(data, overrides)
+			for _, file := range item.Scope.Files {
+				contents, err := os.ReadFile(sourcePath(model, file.Source))
+				if err != nil {
+					return nil, fmt.Errorf("config %q scope %q file %q: %w", item.Name, namespace, file.Name, err)
+				}
+				data[file.Name] = string(contents)
+			}
 		}
 
 		objects = append(objects, &corev1.ConfigMap{
@@ -49,19 +62,21 @@ func buildConfigMaps(model config.Model, namespace string) ([]client.Object, err
 func buildSecrets(model config.Model, namespace string) ([]client.Object, error) {
 	objects := make([]client.Object, 0, len(model.Secrets))
 	for _, item := range model.Secrets {
-		source := item.Source
-		prefix := item.Prefix
-		if item.Scope != nil && item.Scope.Namespace == namespace {
-			source = item.Scope.Source
-			if item.Scope.Prefix != "" {
-				prefix = item.Scope.Prefix
-			}
-		}
-		data, err := godotenv.Read(sourcePath(model, source))
-		if err != nil {
+		data := make(map[string]string)
+		if err := mergeEnvSource(model, item.Env, data); err != nil {
 			return nil, fmt.Errorf("secret %q: %w", item.Name, err)
 		}
-		data = secretData(data, prefix)
+		if err := mergeSecretFiles(model, item.Files, data); err != nil {
+			return nil, fmt.Errorf("secret %q: %w", item.Name, err)
+		}
+		if item.Scope != nil && item.Scope.Namespace == namespace {
+			if err := mergeEnvSource(model, item.Scope.Env, data); err != nil {
+				return nil, fmt.Errorf("secret %q scope %q: %w", item.Name, namespace, err)
+			}
+			if err := mergeSecretFiles(model, item.Scope.Files, data); err != nil {
+				return nil, fmt.Errorf("secret %q scope %q: %w", item.Name, namespace, err)
+			}
+		}
 
 		objects = append(objects, &corev1.Secret{
 			ObjectMeta: metav1.ObjectMeta{Name: item.Name, Namespace: namespace},
@@ -69,6 +84,51 @@ func buildSecrets(model config.Model, namespace string) ([]client.Object, error)
 		})
 	}
 	return objects, nil
+}
+
+func mergeEnvSource(model config.Model, source *config.EnvSource, data map[string]string) error {
+	if source == nil {
+		return nil
+	}
+	values, err := readEnvSource(model, source.Source, source.Prefix)
+	if err != nil {
+		return err
+	}
+	maps.Copy(data, values)
+	return nil
+}
+
+func mergeSecretFiles(model config.Model, files []config.SecretFile, data map[string]string) error {
+	for _, file := range files {
+		contents, err := os.ReadFile(sourcePath(model, file.Source))
+		if err != nil {
+			return fmt.Errorf("file %q: %w", file.Name, err)
+		}
+		data[file.Name] = string(contents)
+	}
+	return nil
+}
+
+func readEnvSource(model config.Model, source, prefix string) (map[string]string, error) {
+	if source == "" {
+		return map[string]string{}, nil
+	}
+	data, err := godotenv.Read(sourcePath(model, source))
+	if err != nil {
+		return nil, err
+	}
+	if prefix == "" {
+		return data, nil
+	}
+
+	filtered := make(map[string]string)
+	for name, value := range data {
+		if len(name) < len(prefix) || name[:len(prefix)] != prefix {
+			continue
+		}
+		filtered[name[len(prefix):]] = value
+	}
+	return filtered, nil
 }
 
 func buildPersistentVolumeClaims(model config.Model, namespace string) ([]client.Object, error) {
@@ -123,18 +183,4 @@ func sourcePath(model config.Model, source string) string {
 		return source
 	}
 	return filepath.Join(filepath.Dir(model.SourcePath), source)
-}
-
-func secretData(data map[string]string, prefix string) map[string]string {
-	if prefix == "" {
-		return data
-	}
-	filtered := make(map[string]string)
-	for name, value := range data {
-		if len(name) < len(prefix) || name[:len(prefix)] != prefix {
-			continue
-		}
-		filtered[name[len(prefix):]] = value
-	}
-	return filtered
 }

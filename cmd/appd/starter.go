@@ -5,6 +5,11 @@ namespace "prod" {}
 namespace "staging" {}
 
 config "app" {
+  env {
+    source = ".env"
+    prefix = "APP_"
+  }
+
   APP_ENV = "prod"
   PORT    = "3000"
 
@@ -14,12 +19,20 @@ config "app" {
 }
 
 secret "app" {
-  source = ".env"
-  prefix = "APP_"
+  env {
+    source = ".env"
+    prefix = "SECRET_"
+  }
+
+  file "" {
+    source = ""
+  }
 
   scope "staging" {
-    source = ".env"
-    prefix = "APP_STAGING_"
+    env {
+      source = ".env"
+      prefix = "SECRET_STAGING_"
+    }
   }
 }
 
@@ -71,7 +84,10 @@ job "migrate" {
 route "api" {
   to         = app.api
   host       = "api.demo.example"
+  class_name = ""
   tls_secret = ""
+
+  path "/" {}
 
   annotations = {
     "nginx.ingress.kubernetes.io/enable-cors" = "true"
@@ -88,18 +104,19 @@ namespace "name" {}
   Declares a namespace that AppDeploy can render into.
 
 config "name" {
+  env { source = ".env" prefix = "APP_" }
   KEY = "value"
   file "name" { source = "./path" }
   scope "namespace" { ... }
 }
-  Builds a ConfigMap from inline string values and optional files.
+  Builds a ConfigMap from inline string values, env files, and optional files.
 
 secret "name" {
-  source = ".env"
-  prefix = "APP_"
+  env { source = ".env" prefix = "SECRET_" }
+  file "name" { source = "./path" }
   scope "namespace" { ... }
 }
-  Builds a Secret from env files, filtered by prefix if set.
+  Builds a Secret from env files, filtered by prefix, and optional files.
 
 volume "name" {
   size = "10Gi"
@@ -147,12 +164,18 @@ cron "name" {
   Creates a CronJob that runs on a schedule.
 
 route "name" {
-  to = app.api
-  host = "api.example.com"
-  tls_secret = ""
+	to         = app.api
+	host       = "api.example.com"
+	class_name = ""
+	tls_secret = ""
+
+	path "/" {}
+	path "/metrics" {
+	  port = 9090
+	}
   annotations = { "key" = "value" }
 }
-  Creates an Ingress pointing at an app service.
+  Creates an Ingress pointing at an app service. A path without port uses the app's first service port.
 
 manifest "name" {
   yaml = <<YAML

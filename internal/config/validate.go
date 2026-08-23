@@ -31,6 +31,9 @@ func (model Model) Validate() error {
 		if err := validateConfigValues(config.Values); err != nil {
 			return fmt.Errorf("config %q: %w", config.Name, err)
 		}
+		if err := validateEnvSource(model, config.Env); err != nil {
+			return fmt.Errorf("config %q: %w", config.Name, err)
+		}
 		for _, file := range config.Files {
 			if err := model.validateSourceFile(file.Source); err != nil {
 				return fmt.Errorf("config %q file %q: %w", config.Name, file.Name, err)
@@ -43,6 +46,14 @@ func (model Model) Validate() error {
 			if err := validateConfigValues(config.Scope.Values); err != nil {
 				return fmt.Errorf("config %q scope %q: %w", config.Name, config.Scope.Namespace, err)
 			}
+			if err := validateEnvSource(model, config.Scope.Env); err != nil {
+				return fmt.Errorf("config %q scope %q: %w", config.Name, config.Scope.Namespace, err)
+			}
+			for _, file := range config.Scope.Files {
+				if err := model.validateSourceFile(file.Source); err != nil {
+					return fmt.Errorf("config %q scope %q file %q: %w", config.Name, config.Scope.Namespace, file.Name, err)
+				}
+			}
 		}
 	}
 
@@ -51,14 +62,20 @@ func (model Model) Validate() error {
 		if err := addName(secrets, "secret", secret.Name); err != nil {
 			return err
 		}
-		if err := model.validateSecretSource(secret.Source); err != nil {
+		if err := validateSecretFiles(model, secret.Files); err != nil {
+			return fmt.Errorf("secret %q: %w", secret.Name, err)
+		}
+		if err := validateEnvSource(model, secret.Env); err != nil {
 			return fmt.Errorf("secret %q: %w", secret.Name, err)
 		}
 		if secret.Scope != nil {
 			if err := validateHCLScope(secret.Scope.Namespace, namespaces); err != nil {
 				return fmt.Errorf("secret %q: %w", secret.Name, err)
 			}
-			if err := model.validateSecretSource(secret.Scope.Source); err != nil {
+			if err := validateSecretFiles(model, secret.Scope.Files); err != nil {
+				return fmt.Errorf("secret %q scope %q: %w", secret.Name, secret.Scope.Namespace, err)
+			}
+			if err := validateEnvSource(model, secret.Scope.Env); err != nil {
 				return fmt.Errorf("secret %q scope %q: %w", secret.Name, secret.Scope.Namespace, err)
 			}
 		}
@@ -111,6 +128,14 @@ func (model Model) Validate() error {
 		if err := validateReference(route.To, "app", apps); err != nil {
 			return fmt.Errorf("route %q: %w", route.Name, err)
 		}
+		for _, path := range route.Paths {
+			if path.Path == "" || path.Path[0] != '/' {
+				return fmt.Errorf("route %q: path %q must start with /", route.Name, path.Path)
+			}
+			if path.Port != nil && *path.Port <= 0 {
+				return fmt.Errorf("route %q: path %q port must be positive", route.Name, path.Path)
+			}
+		}
 	}
 
 	manifests := make(map[string]struct{}, len(model.Manifests))
@@ -133,6 +158,25 @@ func validateConfigValues(body hcl.Body) error {
 	_, diagnostics := body.JustAttributes()
 	if diagnostics.HasErrors() {
 		return fmt.Errorf("only environment variable attributes are allowed")
+	}
+	return nil
+}
+
+func validateEnvSource(model Model, env *EnvSource) error {
+	if env == nil {
+		return nil
+	}
+	if err := model.validateSourceFile(env.Source); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateSecretFiles(model Model, files []SecretFile) error {
+	for _, file := range files {
+		if err := model.validateSourceFile(file.Source); err != nil {
+			return fmt.Errorf("file %q: %w", file.Name, err)
+		}
 	}
 	return nil
 }

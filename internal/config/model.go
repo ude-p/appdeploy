@@ -55,6 +55,7 @@ func (model Model) HasNamespace(name string) bool {
 
 type Config struct {
 	Name   string       `hcl:"name,label"`
+	Env    *EnvSource   `hcl:"env,block"`
 	Files  []ConfigFile `hcl:"file,block"`
 	Scope  *ConfigScope `hcl:"scope,block"`
 	Values hcl.Body     `hcl:",remain"`
@@ -66,21 +67,33 @@ type ConfigFile struct {
 }
 
 type ConfigScope struct {
-	Namespace string   `hcl:"namespace,label"`
-	Values    hcl.Body `hcl:",remain"`
+	Namespace string       `hcl:"namespace,label"`
+	Env       *EnvSource   `hcl:"env,block"`
+	Files     []ConfigFile `hcl:"file,block"`
+	Values    hcl.Body     `hcl:",remain"`
 }
 
 type SecretHCL struct {
-	Name   string       `hcl:"name,label"`
-	Source string       `hcl:"source,attr"`
-	Prefix string       `hcl:"prefix,optional"`
-	Scope  *SecretScope `hcl:"scope,block"`
+	Name  string       `hcl:"name,label"`
+	Env   *EnvSource   `hcl:"env,block"`
+	Files []SecretFile `hcl:"file,block"`
+	Scope *SecretScope `hcl:"scope,block"`
 }
 
 type SecretScope struct {
-	Namespace string `hcl:"namespace,label"`
-	Source    string `hcl:"source,attr"`
-	Prefix    string `hcl:"prefix,optional"`
+	Namespace string       `hcl:"namespace,label"`
+	Env       *EnvSource   `hcl:"env,block"`
+	Files     []SecretFile `hcl:"file,block"`
+}
+
+type EnvSource struct {
+	Source string `hcl:"source,attr"`
+	Prefix string `hcl:"prefix,optional"`
+}
+
+type SecretFile struct {
+	Name   string `hcl:"name,label"`
+	Source string `hcl:"source,attr"`
 }
 
 type Volume struct {
@@ -167,8 +180,15 @@ type Route struct {
 	Name        string            `hcl:"name,label"`
 	To          hcl.Expression    `hcl:"to,attr"`
 	Host        string            `hcl:"host,attr"`
+	ClassName   string            `hcl:"class_name,optional"`
+	Paths       []RoutePath       `hcl:"path,block"`
 	TLSSecret   string            `hcl:"tls_secret,optional"`
 	Annotations map[string]string `hcl:"annotations,optional"`
+}
+
+type RoutePath struct {
+	Path string `hcl:"path,label"`
+	Port *int32 `hcl:"port,optional"`
 }
 
 type Manifest struct {
