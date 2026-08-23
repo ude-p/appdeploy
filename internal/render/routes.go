@@ -12,6 +12,9 @@ import (
 func buildIngresses(model config.Model, namespace string) ([]client.Object, error) {
 	objects := make([]client.Object, 0, len(model.Routes))
 	for _, route := range model.Routes {
+		if route.Scope != "" && route.Scope != namespace {
+			continue
+		}
 		appName, err := referenceName(route.To)
 		if err != nil {
 			return nil, fmt.Errorf("route %q: %w", route.Name, err)

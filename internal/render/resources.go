@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/hashicorp/hcl/v2"
+	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/joho/godotenv"
 	"github.com/ude-p/appdeploy/internal/config"
 	"github.com/zclconf/go-cty/cty"
@@ -26,6 +27,7 @@ func buildConfigMaps(model config.Model, namespace string) ([]client.Object, err
 		if err := mergeEnvSource(model, item.Env, data); err != nil {
 			return nil, fmt.Errorf("config %q: %w", item.Name, err)
 		}
+		maps.Copy(data, item.Data)
 		for _, file := range item.Files {
 			contents, err := os.ReadFile(sourcePath(model, file.Source))
 			if err != nil {
@@ -42,6 +44,7 @@ func buildConfigMaps(model config.Model, namespace string) ([]client.Object, err
 				return nil, fmt.Errorf("config %q scope %q: %w", item.Name, namespace, err)
 			}
 			maps.Copy(data, overrides)
+			maps.Copy(data, item.Scope.Data)
 			for _, file := range item.Scope.Files {
 				contents, err := os.ReadFile(sourcePath(model, file.Source))
 				if err != nil {
@@ -161,11 +164,14 @@ func configData(body hcl.Body) (map[string]string, error) {
 	if body == nil {
 		return data, nil
 	}
-	attributes, diagnostics := body.JustAttributes()
-	if diagnostics.HasErrors() {
-		return nil, fmt.Errorf("read environment variables: %s", diagnostics.Error())
+	syntaxBody, ok := body.(*hclsyntax.Body)
+	if !ok {
+		return nil, fmt.Errorf("read config values")
 	}
-	for name, attribute := range attributes {
+	for name, attribute := range syntaxBody.Attributes {
+		if name == "data" {
+			continue
+		}
 		value, diagnostics := attribute.Expr.Value(nil)
 		if diagnostics.HasErrors() {
 			return nil, fmt.Errorf("%s: %s", name, diagnostics.Error())

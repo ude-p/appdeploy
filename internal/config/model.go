@@ -2,11 +2,24 @@ package config
 
 import (
 	"fmt"
+	"reflect"
 
 	"github.com/hashicorp/hcl/v2"
 	"github.com/hashicorp/hcl/v2/gohcl"
 	"github.com/hashicorp/hcl/v2/hclparse"
 )
+
+func HasExpression(expression hcl.Expression) bool {
+	if expression == nil {
+		return false
+	}
+	value := reflect.ValueOf(expression)
+	if value.Kind() == reflect.Ptr && value.IsNil() {
+		return false
+	}
+	result, diagnostics := expression.Value(nil)
+	return diagnostics.HasErrors() || !result.IsNull()
+}
 
 type Model struct {
 	Namespaces []Namespace `hcl:"namespace,block"`
@@ -54,11 +67,12 @@ func (model Model) HasNamespace(name string) bool {
 }
 
 type Config struct {
-	Name   string       `hcl:"name,label"`
-	Env    *EnvSource   `hcl:"env,block"`
-	Files  []ConfigFile `hcl:"file,block"`
-	Scope  *ConfigScope `hcl:"scope,block"`
-	Values hcl.Body     `hcl:",remain"`
+	Name   string            `hcl:"name,label"`
+	Env    *EnvSource        `hcl:"env,block"`
+	Data   map[string]string `hcl:"data,optional"`
+	Files  []ConfigFile      `hcl:"file,block"`
+	Scope  *ConfigScope      `hcl:"scope,block"`
+	Values hcl.Body          `hcl:",remain"`
 }
 
 type ConfigFile struct {
@@ -67,10 +81,11 @@ type ConfigFile struct {
 }
 
 type ConfigScope struct {
-	Namespace string       `hcl:"namespace,label"`
-	Env       *EnvSource   `hcl:"env,block"`
-	Files     []ConfigFile `hcl:"file,block"`
-	Values    hcl.Body     `hcl:",remain"`
+	Namespace string            `hcl:"namespace,label"`
+	Env       *EnvSource        `hcl:"env,block"`
+	Data      map[string]string `hcl:"data,optional"`
+	Files     []ConfigFile      `hcl:"file,block"`
+	Values    hcl.Body          `hcl:",remain"`
 }
 
 type SecretHCL struct {
@@ -105,6 +120,7 @@ type Volume struct {
 
 type App struct {
 	Name      string     `hcl:"name,label"`
+	Scope     string     `hcl:"scope,optional"`
 	Image     string     `hcl:"image,attr"`
 	Replicas  *int32     `hcl:"replicas,optional"`
 	Command   []string   `hcl:"command,optional"`
@@ -118,10 +134,12 @@ type App struct {
 
 type Stateful struct {
 	Name    string           `hcl:"name,label"`
+	Scope   string           `hcl:"scope,optional"`
 	Image   string           `hcl:"image,attr"`
 	Env     *Env             `hcl:"env,block"`
 	Ports   []Port           `hcl:"port,block"`
 	Volumes []StatefulVolume `hcl:"volume,block"`
+	Mounts  []Mount          `hcl:"mount,block"`
 }
 
 type StatefulVolume struct {
@@ -134,6 +152,7 @@ type StatefulVolume struct {
 
 type Job struct {
 	Name    string   `hcl:"name,label"`
+	Scope   string   `hcl:"scope,optional"`
 	Image   string   `hcl:"image,attr"`
 	Command []string `hcl:"command,optional"`
 	Args    []string `hcl:"args,optional"`
@@ -143,6 +162,7 @@ type Job struct {
 
 type Cron struct {
 	Name     string   `hcl:"name,label"`
+	Scope    string   `hcl:"scope,optional"`
 	Image    string   `hcl:"image,attr"`
 	Schedule string   `hcl:"schedule,attr"`
 	Command  []string `hcl:"command,optional"`
@@ -154,6 +174,12 @@ type Cron struct {
 type Env struct {
 	Config hcl.Expression `hcl:"config,optional"`
 	Secret hcl.Expression `hcl:"secret,optional"`
+	Fields []FieldRef     `hcl:"field,block"`
+}
+
+type FieldRef struct {
+	Name string `hcl:"name,label"`
+	Path string `hcl:"path,attr"`
 }
 
 type Port struct {
@@ -167,7 +193,9 @@ type Resources struct {
 }
 
 type Mount struct {
-	Volume hcl.Expression `hcl:"volume,attr"`
+	Volume hcl.Expression `hcl:"volume,optional"`
+	Config hcl.Expression `hcl:"config,optional"`
+	Secret hcl.Expression `hcl:"secret,optional"`
 	Path   string         `hcl:"path,attr"`
 }
 
@@ -178,6 +206,7 @@ type Health struct {
 
 type Route struct {
 	Name        string            `hcl:"name,label"`
+	Scope       string            `hcl:"scope,optional"`
 	To          hcl.Expression    `hcl:"to,attr"`
 	Host        string            `hcl:"host,attr"`
 	ClassName   string            `hcl:"class_name,optional"`

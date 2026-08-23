@@ -15,6 +15,9 @@ import (
 func buildApps(model config.Model, namespace string) ([]client.Object, error) {
 	objects := make([]client.Object, 0, len(model.Apps)*2)
 	for _, app := range model.Apps {
+		if app.Scope != "" && app.Scope != namespace {
+			continue
+		}
 		labels := map[string]string{"app.kubernetes.io/name": app.Name}
 		replicas := int32(1)
 		if app.Replicas != nil {
@@ -55,24 +58,12 @@ func buildContainer(app config.App) (corev1.Container, []corev1.Volume, error) {
 		Args:            app.Args,
 	}
 	if app.Env != nil {
-		if app.Env.Config != nil {
-			name, err := referenceName(app.Env.Config)
-			if err != nil {
-				return corev1.Container{}, nil, err
-			}
-			container.EnvFrom = append(container.EnvFrom, corev1.EnvFromSource{
-				ConfigMapRef: &corev1.ConfigMapEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: name}},
-			})
+		envFrom, env, err := buildEnv(app.Env)
+		if err != nil {
+			return corev1.Container{}, nil, err
 		}
-		if app.Env.Secret != nil {
-			name, err := referenceName(app.Env.Secret)
-			if err != nil {
-				return corev1.Container{}, nil, err
-			}
-			container.EnvFrom = append(container.EnvFrom, corev1.EnvFromSource{
-				SecretRef: &corev1.SecretEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: name}},
-			})
-		}
+		container.EnvFrom = envFrom
+		container.Env = env
 	}
 
 	for _, port := range app.Ports {
@@ -106,22 +97,75 @@ func buildContainer(app config.App) (corev1.Container, []corev1.Volume, error) {
 		container.ReadinessProbe = probe.DeepCopy()
 	}
 
-	volumes := make([]corev1.Volume, 0, len(app.Mounts))
-	for _, mount := range app.Mounts {
-		name, err := referenceName(mount.Volume)
+	mounts, volumes, err := buildMounts(app.Mounts)
+	if err != nil {
+		return corev1.Container{}, nil, err
+	}
+	container.VolumeMounts = mounts
+
+	return container, volumes, nil
+}
+
+func buildEnv(env *config.Env) ([]corev1.EnvFromSource, []corev1.EnvVar, error) {
+	if env == nil {
+		return nil, nil, nil
+	}
+	envFrom := make([]corev1.EnvFromSource, 0, 2)
+	if config.HasExpression(env.Config) {
+		name, err := referenceName(env.Config)
 		if err != nil {
-			return corev1.Container{}, nil, err
+			return nil, nil, err
 		}
-		container.VolumeMounts = append(container.VolumeMounts, corev1.VolumeMount{Name: name, MountPath: mount.Path})
-		volumes = append(volumes, corev1.Volume{
-			Name: name,
-			VolumeSource: corev1.VolumeSource{
-				PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: name},
+		envFrom = append(envFrom, corev1.EnvFromSource{
+			ConfigMapRef: &corev1.ConfigMapEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: name}},
+		})
+	}
+	if config.HasExpression(env.Secret) {
+		name, err := referenceName(env.Secret)
+		if err != nil {
+			return nil, nil, err
+		}
+		envFrom = append(envFrom, corev1.EnvFromSource{
+			SecretRef: &corev1.SecretEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: name}},
+		})
+	}
+	fields := make([]corev1.EnvVar, 0, len(env.Fields))
+	for _, field := range env.Fields {
+		fields = append(fields, corev1.EnvVar{
+			Name: field.Name,
+			ValueFrom: &corev1.EnvVarSource{
+				FieldRef: &corev1.ObjectFieldSelector{FieldPath: field.Path},
 			},
 		})
 	}
+	return envFrom, fields, nil
+}
 
-	return container, volumes, nil
+func buildMounts(mounts []config.Mount) ([]corev1.VolumeMount, []corev1.Volume, error) {
+	volumeMounts := make([]corev1.VolumeMount, 0, len(mounts))
+	volumes := make([]corev1.Volume, 0, len(mounts))
+	for _, mount := range mounts {
+		var name string
+		var source corev1.VolumeSource
+		var err error
+		switch {
+		case config.HasExpression(mount.Volume):
+			name, err = referenceName(mount.Volume)
+			source.PersistentVolumeClaim = &corev1.PersistentVolumeClaimVolumeSource{ClaimName: name}
+		case config.HasExpression(mount.Config):
+			name, err = referenceName(mount.Config)
+			source.ConfigMap = &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: name}}
+		case config.HasExpression(mount.Secret):
+			name, err = referenceName(mount.Secret)
+			source.Secret = &corev1.SecretVolumeSource{SecretName: name}
+		}
+		if err != nil {
+			return nil, nil, err
+		}
+		volumeMounts = append(volumeMounts, corev1.VolumeMount{Name: name, MountPath: mount.Path})
+		volumes = append(volumes, corev1.Volume{Name: name, VolumeSource: source})
+	}
+	return volumeMounts, volumes, nil
 }
 
 func buildService(app config.App, namespace string) *corev1.Service {

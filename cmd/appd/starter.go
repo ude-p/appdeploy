@@ -103,12 +103,13 @@ namespace "name" {}
 config "name" {
   env { source = ".env" prefix = "CONFIG_" }
   NEW_KEY = "value"
+  data = { "file.txt" = "content" }
   file "name" { source = "./path" }
   scope "namespace" {
     EXISTING_KEY = "override"
   }
 }
-  Builds a ConfigMap from env files, new inline values, and optional files. Scope values can override existing values.
+  Builds a ConfigMap from env files, new inline values, inline data, and optional files. Scope values can override existing values.
 
 secret "name" {
   env { source = ".env" prefix = "SECRET_" }
@@ -125,25 +126,35 @@ volume "name" {
   Creates a PersistentVolumeClaim that can be mounted by apps.
 
 app "name" {
+	  scope = ""
   image = ""
   replicas = 1
-  env { config = config.app secret = secret.app }
+  env {
+    config = config.app
+    secret = secret.app
+    field "POD_NAME" { path = "metadata.name" }
+  }
   port { service = 80 }
   resources { cpu = "500m" memory = "512Mi" }
   mount { volume = volume.data path = "/data" }
+  mount { config = config.app path = "/config" }
+  mount { secret = secret.app path = "/secrets" }
   health { path = "/health" port = 3000 }
 }
   Creates a Deployment and optional Service.
 
 stateful "name" {
+	  scope = ""
   image = "postgres:16"
   env { ... }
   port { service = 5432 }
   volume "data" { size = "20Gi" path = "/var/lib/postgresql/data" }
+  mount { config = config.init path = "/docker-entrypoint-initdb.d" }
 }
   Creates a StatefulSet plus a headless Service.
 
 job "name" {
+	  scope = ""
   image = ""
   command = []
   args = []
@@ -153,6 +164,7 @@ job "name" {
   Creates a one-shot Kubernetes Job.
 
 cron "name" {
+	  scope = ""
   image = ""
   schedule = "0 2 * * *"
   command = []
@@ -163,6 +175,7 @@ cron "name" {
   Creates a CronJob that runs on a schedule.
 
 route "name" {
+	  scope      = ""
 	to         = app.api
 	host       = "api.example.com"
 	class_name = ""

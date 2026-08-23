@@ -15,29 +15,20 @@ import (
 func buildStatefulSets(model config.Model, namespace string) ([]client.Object, error) {
 	objects := make([]client.Object, 0, len(model.Statefuls)*2)
 	for _, stateful := range model.Statefuls {
+		if stateful.Scope != "" && stateful.Scope != namespace {
+			continue
+		}
 		labels := map[string]string{"app.kubernetes.io/name": stateful.Name}
 		replicas := int32(1)
 		container := corev1.Container{Name: stateful.Name, Image: stateful.Image, ImagePullPolicy: corev1.PullAlways}
 
 		if stateful.Env != nil {
-			if stateful.Env.Config != nil {
-				name, err := referenceName(stateful.Env.Config)
-				if err != nil {
-					return nil, fmt.Errorf("stateful %q: %w", stateful.Name, err)
-				}
-				container.EnvFrom = append(container.EnvFrom, corev1.EnvFromSource{
-					ConfigMapRef: &corev1.ConfigMapEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: name}},
-				})
+			envFrom, env, err := buildEnv(stateful.Env)
+			if err != nil {
+				return nil, fmt.Errorf("stateful %q: %w", stateful.Name, err)
 			}
-			if stateful.Env.Secret != nil {
-				name, err := referenceName(stateful.Env.Secret)
-				if err != nil {
-					return nil, fmt.Errorf("stateful %q: %w", stateful.Name, err)
-				}
-				container.EnvFrom = append(container.EnvFrom, corev1.EnvFromSource{
-					SecretRef: &corev1.SecretEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: name}},
-				})
-			}
+			container.EnvFrom = envFrom
+			container.Env = env
 		}
 
 		for _, port := range stateful.Ports {
@@ -47,6 +38,11 @@ func buildStatefulSets(model config.Model, namespace string) ([]client.Object, e
 			}
 			container.Ports = append(container.Ports, corev1.ContainerPort{ContainerPort: containerPort})
 		}
+		mounts, volumes, err := buildMounts(stateful.Mounts)
+		if err != nil {
+			return nil, fmt.Errorf("stateful %q: %w", stateful.Name, err)
+		}
+		container.VolumeMounts = append(container.VolumeMounts, mounts...)
 
 		claimTemplates := make([]corev1.PersistentVolumeClaim, 0, len(stateful.Volumes))
 		for _, volume := range stateful.Volumes {
@@ -79,7 +75,7 @@ func buildStatefulSets(model config.Model, namespace string) ([]client.Object, e
 				VolumeClaimTemplates: claimTemplates,
 				Template: corev1.PodTemplateSpec{
 					ObjectMeta: metav1.ObjectMeta{Labels: labels},
-					Spec:       corev1.PodSpec{Containers: []corev1.Container{container}},
+					Spec:       corev1.PodSpec{Containers: []corev1.Container{container}, Volumes: volumes},
 				},
 			},
 		})

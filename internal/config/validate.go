@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/hashicorp/hcl/v2"
+	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/joho/godotenv"
 	"gopkg.in/yaml.v3"
 )
@@ -36,15 +37,24 @@ func (model Model) Validate() error {
 				return fmt.Errorf("config %q: %w", config.Name, err)
 			}
 			if config.Values != nil {
-				attributes, diagnostics := config.Values.JustAttributes()
-				if diagnostics.HasErrors() {
-					return fmt.Errorf("config %q: only environment variable attributes are allowed", config.Name)
+				syntaxBody, ok := config.Values.(*hclsyntax.Body)
+				if !ok {
+					return fmt.Errorf("config %q: read config values", config.Name)
 				}
 				envValues, err := godotenv.Read(model.sourcePath(config.Env.Source))
 				if err != nil {
 					return fmt.Errorf("config %q: read env source: %w", config.Name, err)
 				}
-				for name := range attributes {
+				for name := range syntaxBody.Attributes {
+					if name == "data" {
+						continue
+					}
+					envName := config.Env.Prefix + name
+					if _, exists := envValues[envName]; exists {
+						return fmt.Errorf("config %q: value %q is already provided by env source", config.Name, name)
+					}
+				}
+				for name := range config.Data {
 					envName := config.Env.Prefix + name
 					if _, exists := envValues[envName]; exists {
 						return fmt.Errorf("config %q: value %q is already provided by env source", config.Name, name)
@@ -137,11 +147,14 @@ func (model Model) Validate() error {
 		if err := addName(apps, "app", app.Name); err != nil {
 			return err
 		}
+		if err := validateHCLScope(app.Scope, namespaces); err != nil {
+			return fmt.Errorf("app %q: %w", app.Name, err)
+		}
 		if err := validateEnv(app.Env, configs, secrets); err != nil {
 			return fmt.Errorf("app %q: %w", app.Name, err)
 		}
 		for _, mount := range app.Mounts {
-			if err := validateReference(mount.Volume, "volume", volumes); err != nil {
+			if err := validateMount(mount, volumes, configs, secrets); err != nil {
 				return fmt.Errorf("app %q mount: %w", app.Name, err)
 			}
 		}
@@ -152,15 +165,23 @@ func (model Model) Validate() error {
 		if err := addName(statefuls, "stateful", stateful.Name); err != nil {
 			return err
 		}
+		if err := validateHCLScope(stateful.Scope, namespaces); err != nil {
+			return fmt.Errorf("stateful %q: %w", stateful.Name, err)
+		}
 		if err := validateEnv(stateful.Env, configs, secrets); err != nil {
 			return fmt.Errorf("stateful %q: %w", stateful.Name, err)
 		}
+		for _, mount := range stateful.Mounts {
+			if err := validateMount(mount, volumes, configs, secrets); err != nil {
+				return fmt.Errorf("stateful %q mount: %w", stateful.Name, err)
+			}
+		}
 	}
 
-	if err := validateJobs(model.Jobs, configs, secrets); err != nil {
+	if err := validateJobs(model.Jobs, namespaces, configs, secrets); err != nil {
 		return err
 	}
-	if err := validateCrons(model.Crons, configs, secrets); err != nil {
+	if err := validateCrons(model.Crons, namespaces, configs, secrets); err != nil {
 		return err
 	}
 
@@ -168,6 +189,9 @@ func (model Model) Validate() error {
 	for _, route := range model.Routes {
 		if err := addName(routes, "route", route.Name); err != nil {
 			return err
+		}
+		if err := validateHCLScope(route.Scope, namespaces); err != nil {
+			return fmt.Errorf("route %q: %w", route.Name, err)
 		}
 		if err := validateReference(route.To, "app", apps); err != nil {
 			return fmt.Errorf("route %q: %w", route.Name, err)
@@ -199,9 +223,14 @@ func validateConfigValues(body hcl.Body) error {
 	if body == nil {
 		return nil
 	}
-	_, diagnostics := body.JustAttributes()
-	if diagnostics.HasErrors() {
-		return fmt.Errorf("only environment variable attributes are allowed")
+	syntaxBody, ok := body.(*hclsyntax.Body)
+	if !ok {
+		return fmt.Errorf("read config values")
+	}
+	for _, block := range syntaxBody.Blocks {
+		if block.Type != "env" && block.Type != "file" && block.Type != "scope" {
+			return fmt.Errorf("only environment variable attributes are allowed")
+		}
 	}
 	return nil
 }
@@ -225,11 +254,14 @@ func validateSecretFiles(model Model, files []SecretFile) error {
 	return nil
 }
 
-func validateJobs(jobs []Job, configs, secrets map[string]struct{}) error {
+func validateJobs(jobs []Job, namespaces, configs, secrets map[string]struct{}) error {
 	names := make(map[string]struct{}, len(jobs))
 	for _, job := range jobs {
 		if err := addName(names, "job", job.Name); err != nil {
 			return err
+		}
+		if err := validateHCLScope(job.Scope, namespaces); err != nil {
+			return fmt.Errorf("job %q: %w", job.Name, err)
 		}
 		if err := validateEnv(job.Env, configs, secrets); err != nil {
 			return fmt.Errorf("job %q: %w", job.Name, err)
@@ -238,11 +270,14 @@ func validateJobs(jobs []Job, configs, secrets map[string]struct{}) error {
 	return nil
 }
 
-func validateCrons(crons []Cron, configs, secrets map[string]struct{}) error {
+func validateCrons(crons []Cron, namespaces, configs, secrets map[string]struct{}) error {
 	names := make(map[string]struct{}, len(crons))
 	for _, cron := range crons {
 		if err := addName(names, "cron", cron.Name); err != nil {
 			return err
+		}
+		if err := validateHCLScope(cron.Scope, namespaces); err != nil {
+			return fmt.Errorf("cron %q: %w", cron.Name, err)
 		}
 		if err := validateEnv(cron.Env, configs, secrets); err != nil {
 			return fmt.Errorf("cron %q: %w", cron.Name, err)
@@ -261,10 +296,42 @@ func validateEnv(env *Env, configs, secrets map[string]struct{}) error {
 	if err := validateReference(env.Secret, "secret", secrets); err != nil {
 		return fmt.Errorf("secret: %w", err)
 	}
+	fields := make(map[string]struct{}, len(env.Fields))
+	for _, field := range env.Fields {
+		if err := addName(fields, "environment field", field.Name); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
+func validateMount(mount Mount, volumes, configs, secrets map[string]struct{}) error {
+	count := 0
+	if HasExpression(mount.Volume) {
+		count++
+	}
+	if HasExpression(mount.Config) {
+		count++
+	}
+	if HasExpression(mount.Secret) {
+		count++
+	}
+	if count != 1 {
+		return fmt.Errorf("must specify exactly one of volume, config, or secret")
+	}
+	if HasExpression(mount.Volume) {
+		return validateReference(mount.Volume, "volume", volumes)
+	}
+	if HasExpression(mount.Config) {
+		return validateReference(mount.Config, "config", configs)
+	}
+	return validateReference(mount.Secret, "secret", secrets)
+}
+
 func validateHCLScope(namespace string, namespaces map[string]struct{}) error {
+	if namespace == "" {
+		return nil
+	}
 	if _, exists := namespaces[namespace]; !exists {
 		return fmt.Errorf("scope references unknown namespace %q", namespace)
 	}
@@ -272,7 +339,7 @@ func validateHCLScope(namespace string, namespaces map[string]struct{}) error {
 }
 
 func validateReference(expression hcl.Expression, kind string, names map[string]struct{}) error {
-	if expression == nil {
+	if !HasExpression(expression) {
 		return nil
 	}
 	traversal, diagnostics := hcl.AbsTraversalForExpr(expression)

@@ -13,6 +13,9 @@ import (
 func buildJobs(model config.Model, namespace string) ([]client.Object, error) {
 	objects := make([]client.Object, 0, len(model.Jobs))
 	for _, job := range model.Jobs {
+		if job.Scope != "" && job.Scope != namespace {
+			continue
+		}
 		container, err := buildJobContainer(job.Name, job.Image, job.Command, job.Args, job.Env)
 		if err != nil {
 			return nil, fmt.Errorf("job %q: %w", job.Name, err)
@@ -37,6 +40,9 @@ func buildJobs(model config.Model, namespace string) ([]client.Object, error) {
 func buildCronJobs(model config.Model, namespace string) ([]client.Object, error) {
 	objects := make([]client.Object, 0, len(model.Crons))
 	for _, cron := range model.Crons {
+		if cron.Scope != "" && cron.Scope != namespace {
+			continue
+		}
 		container, err := buildJobContainer(cron.Name, cron.Image, cron.Command, cron.Args, cron.Env)
 		if err != nil {
 			return nil, fmt.Errorf("cron %q: %w", cron.Name, err)
@@ -61,26 +67,11 @@ func buildCronJobs(model config.Model, namespace string) ([]client.Object, error
 
 func buildJobContainer(name, image string, command, args []string, env *config.Env) (corev1.Container, error) {
 	container := corev1.Container{Name: name, Image: image, ImagePullPolicy: corev1.PullAlways, Command: command, Args: args}
-	if env == nil {
-		return container, nil
+	envFrom, fields, err := buildEnv(env)
+	if err != nil {
+		return corev1.Container{}, err
 	}
-	if env.Config != nil {
-		configName, err := referenceName(env.Config)
-		if err != nil {
-			return corev1.Container{}, err
-		}
-		container.EnvFrom = append(container.EnvFrom, corev1.EnvFromSource{
-			ConfigMapRef: &corev1.ConfigMapEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: configName}},
-		})
-	}
-	if env.Secret != nil {
-		secretName, err := referenceName(env.Secret)
-		if err != nil {
-			return corev1.Container{}, err
-		}
-		container.EnvFrom = append(container.EnvFrom, corev1.EnvFromSource{
-			SecretRef: &corev1.SecretEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: secretName}},
-		})
-	}
+	container.EnvFrom = envFrom
+	container.Env = fields
 	return container, nil
 }
