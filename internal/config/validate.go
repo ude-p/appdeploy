@@ -31,10 +31,32 @@ func (model Model) Validate() error {
 		if err := validateConfigValues(config.Values); err != nil {
 			return fmt.Errorf("config %q: %w", config.Name, err)
 		}
-		if err := validateEnvSource(model, config.Env); err != nil {
-			return fmt.Errorf("config %q: %w", config.Name, err)
+		if config.Env != nil {
+			if err := validateEnvSource(model, config.Env); err != nil {
+				return fmt.Errorf("config %q: %w", config.Name, err)
+			}
+			if config.Values != nil {
+				attributes, diagnostics := config.Values.JustAttributes()
+				if diagnostics.HasErrors() {
+					return fmt.Errorf("config %q: only environment variable attributes are allowed", config.Name)
+				}
+				envValues, err := godotenv.Read(model.sourcePath(config.Env.Source))
+				if err != nil {
+					return fmt.Errorf("config %q: read env source: %w", config.Name, err)
+				}
+				for name := range attributes {
+					envName := config.Env.Prefix + name
+					if _, exists := envValues[envName]; exists {
+						return fmt.Errorf("config %q: value %q is already provided by env source", config.Name, name)
+					}
+				}
+			}
 		}
+		fileNames := make(map[string]struct{}, len(config.Files))
 		for _, file := range config.Files {
+			if err := addName(fileNames, "config file", file.Name); err != nil {
+				return fmt.Errorf("config %q: %w", config.Name, err)
+			}
 			if err := model.validateSourceFile(file.Source); err != nil {
 				return fmt.Errorf("config %q file %q: %w", config.Name, file.Name, err)
 			}
@@ -49,7 +71,14 @@ func (model Model) Validate() error {
 			if err := validateEnvSource(model, config.Scope.Env); err != nil {
 				return fmt.Errorf("config %q scope %q: %w", config.Name, config.Scope.Namespace, err)
 			}
+			scopeFileNames := make(map[string]struct{}, len(config.Scope.Files))
 			for _, file := range config.Scope.Files {
+				if err := addName(scopeFileNames, "config file", file.Name); err != nil {
+					return fmt.Errorf("config %q scope %q: %w", config.Name, config.Scope.Namespace, err)
+				}
+				if _, exists := fileNames[file.Name]; !exists {
+					return fmt.Errorf("config %q scope %q: file %q is not declared in the base config", config.Name, config.Scope.Namespace, file.Name)
+				}
 				if err := model.validateSourceFile(file.Source); err != nil {
 					return fmt.Errorf("config %q scope %q file %q: %w", config.Name, config.Scope.Namespace, file.Name, err)
 				}
@@ -65,6 +94,12 @@ func (model Model) Validate() error {
 		if err := validateSecretFiles(model, secret.Files); err != nil {
 			return fmt.Errorf("secret %q: %w", secret.Name, err)
 		}
+		fileNames := make(map[string]struct{}, len(secret.Files))
+		for _, file := range secret.Files {
+			if err := addName(fileNames, "secret file", file.Name); err != nil {
+				return fmt.Errorf("secret %q: %w", secret.Name, err)
+			}
+		}
 		if err := validateEnvSource(model, secret.Env); err != nil {
 			return fmt.Errorf("secret %q: %w", secret.Name, err)
 		}
@@ -74,6 +109,15 @@ func (model Model) Validate() error {
 			}
 			if err := validateSecretFiles(model, secret.Scope.Files); err != nil {
 				return fmt.Errorf("secret %q scope %q: %w", secret.Name, secret.Scope.Namespace, err)
+			}
+			scopeFileNames := make(map[string]struct{}, len(secret.Scope.Files))
+			for _, file := range secret.Scope.Files {
+				if err := addName(scopeFileNames, "secret file", file.Name); err != nil {
+					return fmt.Errorf("secret %q scope %q: %w", secret.Name, secret.Scope.Namespace, err)
+				}
+				if _, exists := fileNames[file.Name]; !exists {
+					return fmt.Errorf("secret %q scope %q: file %q is not declared in the base secret", secret.Name, secret.Scope.Namespace, file.Name)
+				}
 			}
 			if err := validateEnvSource(model, secret.Scope.Env); err != nil {
 				return fmt.Errorf("secret %q scope %q: %w", secret.Name, secret.Scope.Namespace, err)
@@ -304,17 +348,6 @@ func (model Model) validateSourceFile(source string) error {
 	source = model.sourcePath(source)
 	if _, err := os.ReadFile(source); err != nil {
 		return fmt.Errorf("read source %q: %w", source, err)
-	}
-	return nil
-}
-
-func (model Model) validateSecretSource(source string) error {
-	if source == "" {
-		return fmt.Errorf("source is required")
-	}
-	path := model.sourcePath(source)
-	if _, err := godotenv.Read(path); err != nil {
-		return fmt.Errorf("read source %q: %w", path, err)
 	}
 	return nil
 }

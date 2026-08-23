@@ -7,11 +7,8 @@ namespace "staging" {}
 config "app" {
   env {
     source = ".env"
-    prefix = "APP_"
+    prefix = "CONFIG_"
   }
-
-  APP_ENV = "prod"
-  PORT    = "3000"
 
   scope "staging" {
     APP_ENV = "staging"
@@ -104,12 +101,14 @@ namespace "name" {}
   Declares a namespace that AppDeploy can render into.
 
 config "name" {
-  env { source = ".env" prefix = "APP_" }
-  KEY = "value"
+  env { source = ".env" prefix = "CONFIG_" }
+  NEW_KEY = "value"
   file "name" { source = "./path" }
-  scope "namespace" { ... }
+  scope "namespace" {
+    EXISTING_KEY = "override"
+  }
 }
-  Builds a ConfigMap from inline string values, env files, and optional files.
+  Builds a ConfigMap from env files, new inline values, and optional files. Scope values can override existing values.
 
 secret "name" {
   env { source = ".env" prefix = "SECRET_" }
