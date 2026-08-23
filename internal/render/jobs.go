@@ -20,6 +20,11 @@ func buildJobs(model config.Model, namespace string) ([]client.Object, error) {
 		if err != nil {
 			return nil, fmt.Errorf("job %q: %w", job.Name, err)
 		}
+		mounts, volumes, err := buildMounts(job.Mounts)
+		if err != nil {
+			return nil, fmt.Errorf("job %q: %w", job.Name, err)
+		}
+		container.VolumeMounts = mounts
 
 		objects = append(objects, &batchv1.Job{
 			ObjectMeta: metav1.ObjectMeta{Name: job.Name, Namespace: namespace},
@@ -27,8 +32,9 @@ func buildJobs(model config.Model, namespace string) ([]client.Object, error) {
 				BackoffLimit: job.Retries,
 				Template: corev1.PodTemplateSpec{
 					Spec: corev1.PodSpec{
-						RestartPolicy: corev1.RestartPolicyNever,
-						Containers:    []corev1.Container{container},
+					RestartPolicy: corev1.RestartPolicyNever,
+					Containers:    []corev1.Container{container},
+					Volumes:       volumes,
 					},
 				},
 			},

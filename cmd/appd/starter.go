@@ -160,6 +160,7 @@ job "name" {
   args = []
   retries = 3
   env { ... }
+  mount { volume = volume.data path = "/data" }
 }
   Creates a one-shot Kubernetes Job.
 

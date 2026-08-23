@@ -158,6 +158,7 @@ type Job struct {
 	Args    []string `hcl:"args,optional"`
 	Retries *int32   `hcl:"retries,optional"`
 	Env     *Env     `hcl:"env,block"`
+	Mounts  []Mount  `hcl:"mount,block"`
 }
 
 type Cron struct {

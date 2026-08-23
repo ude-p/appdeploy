@@ -178,7 +178,7 @@ func (model Model) Validate() error {
 		}
 	}
 
-	if err := validateJobs(model.Jobs, namespaces, configs, secrets); err != nil {
+	if err := validateJobs(model.Jobs, namespaces, volumes, configs, secrets); err != nil {
 		return err
 	}
 	if err := validateCrons(model.Crons, namespaces, configs, secrets); err != nil {
@@ -254,7 +254,7 @@ func validateSecretFiles(model Model, files []SecretFile) error {
 	return nil
 }
 
-func validateJobs(jobs []Job, namespaces, configs, secrets map[string]struct{}) error {
+func validateJobs(jobs []Job, namespaces, volumes, configs, secrets map[string]struct{}) error {
 	names := make(map[string]struct{}, len(jobs))
 	for _, job := range jobs {
 		if err := addName(names, "job", job.Name); err != nil {
@@ -265,6 +265,11 @@ func validateJobs(jobs []Job, namespaces, configs, secrets map[string]struct{}) 
 		}
 		if err := validateEnv(job.Env, configs, secrets); err != nil {
 			return fmt.Errorf("job %q: %w", job.Name, err)
+		}
+		for _, mount := range job.Mounts {
+			if err := validateMount(mount, volumes, configs, secrets); err != nil {
+				return fmt.Errorf("job %q mount: %w", job.Name, err)
+			}
 		}
 	}
 	return nil
