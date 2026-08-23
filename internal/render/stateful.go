@@ -75,7 +75,7 @@ func buildStatefulSets(model config.Model, namespace string) ([]client.Object, e
 				VolumeClaimTemplates: claimTemplates,
 				Template: corev1.PodTemplateSpec{
 					ObjectMeta: metav1.ObjectMeta{Labels: labels},
-					Spec:       corev1.PodSpec{Containers: []corev1.Container{container}, Volumes: volumes},
+					Spec: corev1.PodSpec{NodeSelector: stateful.NodeSelector, Containers: []corev1.Container{container}, Volumes: volumes},
 				},
 			},
 		})

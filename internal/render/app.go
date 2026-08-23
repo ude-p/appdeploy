@@ -36,6 +36,7 @@ func buildApps(model config.Model, namespace string) ([]client.Object, error) {
 				Template: corev1.PodTemplateSpec{
 					ObjectMeta: metav1.ObjectMeta{Labels: labels},
 					Spec: corev1.PodSpec{
+						NodeSelector: app.NodeSelector,
 						Containers: []corev1.Container{container},
 						Volumes:    volumes,
 					},

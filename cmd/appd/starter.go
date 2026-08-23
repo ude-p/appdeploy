@@ -127,8 +127,9 @@ volume "name" {
 
 app "name" {
 	  scope = ""
-  image = ""
-  replicas = 1
+	  image = ""
+	  replicas = 1
+	  node_selector = { "workload" = "storage" }
   env {
     config = config.app
     secret = secret.app
@@ -145,7 +146,8 @@ app "name" {
 
 stateful "name" {
 	  scope = ""
-  image = "postgres:16"
+	  image = "postgres:16"
+	  node_selector = { "workload" = "storage" }
   env { ... }
   port { service = 5432 }
   volume "data" { size = "20Gi" path = "/var/lib/postgresql/data" }
@@ -155,7 +157,8 @@ stateful "name" {
 
 job "name" {
 	  scope = ""
-  image = ""
+	  image = ""
+	  node_selector = { "workload" = "storage" }
   command = []
   args = []
   retries = 3
@@ -166,7 +169,8 @@ job "name" {
 
 cron "name" {
 	  scope = ""
-  image = ""
+	  image = ""
+	  node_selector = { "workload" = "storage" }
   schedule = "0 2 * * *"
   command = []
   args = []

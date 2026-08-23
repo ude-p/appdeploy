@@ -123,6 +123,7 @@ type App struct {
 	Scope     string     `hcl:"scope,optional"`
 	Image     string     `hcl:"image,attr"`
 	Replicas  *int32     `hcl:"replicas,optional"`
+	NodeSelector map[string]string `hcl:"node_selector,optional"`
 	Command   []string   `hcl:"command,optional"`
 	Args      []string   `hcl:"args,optional"`
 	Env       *Env       `hcl:"env,block"`
@@ -136,6 +137,7 @@ type Stateful struct {
 	Name    string           `hcl:"name,label"`
 	Scope   string           `hcl:"scope,optional"`
 	Image   string           `hcl:"image,attr"`
+	NodeSelector map[string]string `hcl:"node_selector,optional"`
 	Env     *Env             `hcl:"env,block"`
 	Ports   []Port           `hcl:"port,block"`
 	Volumes []StatefulVolume `hcl:"volume,block"`
@@ -154,6 +156,7 @@ type Job struct {
 	Name    string   `hcl:"name,label"`
 	Scope   string   `hcl:"scope,optional"`
 	Image   string   `hcl:"image,attr"`
+	NodeSelector map[string]string `hcl:"node_selector,optional"`
 	Command []string `hcl:"command,optional"`
 	Args    []string `hcl:"args,optional"`
 	Retries *int32   `hcl:"retries,optional"`
@@ -165,6 +168,7 @@ type Cron struct {
 	Name     string   `hcl:"name,label"`
 	Scope    string   `hcl:"scope,optional"`
 	Image    string   `hcl:"image,attr"`
+	NodeSelector map[string]string `hcl:"node_selector,optional"`
 	Schedule string   `hcl:"schedule,attr"`
 	Command  []string `hcl:"command,optional"`
 	Args     []string `hcl:"args,optional"`

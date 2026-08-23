@@ -32,6 +32,7 @@ func buildJobs(model config.Model, namespace string) ([]client.Object, error) {
 				BackoffLimit: job.Retries,
 				Template: corev1.PodTemplateSpec{
 					Spec: corev1.PodSpec{
+					NodeSelector:   job.NodeSelector,
 					RestartPolicy: corev1.RestartPolicyNever,
 					Containers:    []corev1.Container{container},
 					Volumes:       volumes,
@@ -61,6 +62,7 @@ func buildCronJobs(model config.Model, namespace string) ([]client.Object, error
 				JobTemplate: batchv1.JobTemplateSpec{Spec: batchv1.JobSpec{
 					BackoffLimit: cron.Retries,
 					Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{
+						NodeSelector: cron.NodeSelector,
 						RestartPolicy: corev1.RestartPolicyNever,
 						Containers:    []corev1.Container{container},
 					}},
