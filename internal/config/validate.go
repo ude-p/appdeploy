@@ -196,6 +196,32 @@ func (model Model) Validate() error {
 		if err := validateReference(route.To, "app", apps); err != nil {
 			return fmt.Errorf("route %q: %w", route.Name, err)
 		}
+		if route.Middleware != nil {
+			if route.Middleware.Headers == nil {
+				return fmt.Errorf("route %q: middleware headers are required", route.Name)
+			}
+			if len(route.Middleware.Headers.AllowOrigins) == 0 {
+				return fmt.Errorf("route %q: middleware allow_origins is required", route.Name)
+			}
+			if len(route.Middleware.Headers.AllowMethods) == 0 {
+				return fmt.Errorf("route %q: middleware allow_methods is required", route.Name)
+			}
+			for _, origin := range route.Middleware.Headers.AllowOrigins {
+				if strings.TrimSpace(origin) == "" {
+					return fmt.Errorf("route %q: middleware allow_origins cannot contain an empty value", route.Name)
+				}
+			}
+			for _, method := range route.Middleware.Headers.AllowMethods {
+				if strings.TrimSpace(method) == "" {
+					return fmt.Errorf("route %q: middleware allow_methods cannot contain an empty value", route.Name)
+				}
+			}
+			for _, header := range route.Middleware.Headers.AllowHeaders {
+				if strings.TrimSpace(header) == "" {
+					return fmt.Errorf("route %q: middleware allow_headers cannot contain an empty value", route.Name)
+				}
+			}
+		}
 		for _, path := range route.Paths {
 			if path.Path == "" || path.Path[0] != '/' {
 				return fmt.Errorf("route %q: path %q must start with /", route.Name, path.Path)

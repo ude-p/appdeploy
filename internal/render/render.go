@@ -26,6 +26,7 @@ func Build(model config.Model, namespace string) ([]client.Object, error) {
 		buildStatefulSets,
 		buildJobs,
 		buildCronJobs,
+		buildRouteMiddlewares,
 		buildIngresses,
 	} {
 		resources, err := builder(model, namespace)

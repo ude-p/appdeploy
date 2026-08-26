@@ -6,8 +6,42 @@ import (
 	"github.com/ude-p/appdeploy/internal/config"
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
+
+func buildRouteMiddlewares(model config.Model, namespace string) ([]client.Object, error) {
+	objects := make([]client.Object, 0, len(model.Routes))
+	for _, route := range model.Routes {
+		if route.Scope != "" && route.Scope != namespace || route.Middleware == nil {
+			continue
+		}
+
+		headers := route.Middleware.Headers
+		specHeaders := map[string]any{
+			"accessControlAllowOriginList": headers.AllowOrigins,
+			"accessControlAllowMethods":    headers.AllowMethods,
+		}
+		if len(headers.AllowHeaders) > 0 {
+			specHeaders["accessControlAllowHeaders"] = headers.AllowHeaders
+		}
+		if headers.AllowCredentials != nil {
+			specHeaders["accessControlAllowCredentials"] = *headers.AllowCredentials
+		}
+		objects = append(objects, &unstructured.Unstructured{Object: map[string]any{
+			"apiVersion": "traefik.io/v1alpha1",
+			"kind":       "Middleware",
+			"metadata": map[string]any{
+				"name":      route.Name + "-middleware",
+				"namespace": namespace,
+			},
+			"spec": map[string]any{
+				"headers": specHeaders,
+			},
+		}})
+	}
+	return objects, nil
+}
 
 func buildIngresses(model config.Model, namespace string) ([]client.Object, error) {
 	objects := make([]client.Object, 0, len(model.Routes))
@@ -60,6 +94,12 @@ func buildIngresses(model config.Model, namespace string) ([]client.Object, erro
 		}
 		if len(route.Annotations) > 0 {
 			ingress.Annotations = route.Annotations
+		}
+		if route.Middleware != nil {
+			if ingress.Annotations == nil {
+				ingress.Annotations = make(map[string]string)
+			}
+			ingress.Annotations["traefik.ingress.kubernetes.io/router.middlewares"] = namespace + "-" + route.Name + "-middleware@kubernetescrd"
 		}
 		if route.TLSSecret != "" {
 			ingress.Spec.TLS = []networkingv1.IngressTLS{{

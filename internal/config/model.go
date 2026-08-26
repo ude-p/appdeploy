@@ -2,7 +2,6 @@ package config
 
 import (
 	"fmt"
-	"reflect"
 
 	"github.com/hashicorp/hcl/v2"
 	"github.com/hashicorp/hcl/v2/gohcl"
@@ -13,25 +12,21 @@ func HasExpression(expression hcl.Expression) bool {
 	if expression == nil {
 		return false
 	}
-	value := reflect.ValueOf(expression)
-	if value.Kind() == reflect.Ptr && value.IsNil() {
-		return false
-	}
 	result, diagnostics := expression.Value(nil)
 	return diagnostics.HasErrors() || !result.IsNull()
 }
 
 type Model struct {
-	Namespaces []Namespace `hcl:"namespace,block"`
-	Configs    []Config    `hcl:"config,block"`
-	Secrets    []SecretHCL `hcl:"secret,block"`
-	Volumes    []Volume    `hcl:"volume,block"`
-	Apps       []App       `hcl:"app,block"`
-	Statefuls  []Stateful  `hcl:"stateful,block"`
-	Jobs       []Job       `hcl:"job,block"`
-	Crons      []Cron      `hcl:"cron,block"`
-	Routes     []Route     `hcl:"route,block"`
-	Manifests  []Manifest  `hcl:"manifest,block"`
+	Namespaces  []Namespace  `hcl:"namespace,block"`
+	Configs     []Config     `hcl:"config,block"`
+	Secrets     []SecretHCL  `hcl:"secret,block"`
+	Volumes     []Volume     `hcl:"volume,block"`
+	Apps        []App        `hcl:"app,block"`
+	Statefuls   []Stateful   `hcl:"stateful,block"`
+	Jobs        []Job        `hcl:"job,block"`
+	Crons       []Cron       `hcl:"cron,block"`
+	Routes    []Route    `hcl:"route,block"`
+	Manifests   []Manifest   `hcl:"manifest,block"`
 
 	SourcePath string
 }
@@ -119,29 +114,29 @@ type Volume struct {
 }
 
 type App struct {
-	Name      string     `hcl:"name,label"`
-	Scope     string     `hcl:"scope,optional"`
-	Image     string     `hcl:"image,attr"`
-	Replicas  *int32     `hcl:"replicas,optional"`
+	Name         string            `hcl:"name,label"`
+	Scope        string            `hcl:"scope,optional"`
+	Image        string            `hcl:"image,attr"`
+	Replicas     *int32            `hcl:"replicas,optional"`
 	NodeSelector map[string]string `hcl:"node_selector,optional"`
-	Command   []string   `hcl:"command,optional"`
-	Args      []string   `hcl:"args,optional"`
-	Env       *Env       `hcl:"env,block"`
-	Ports     []Port     `hcl:"port,block"`
-	Resources *Resources `hcl:"resources,block"`
-	Mounts    []Mount    `hcl:"mount,block"`
-	Health    *Health    `hcl:"health,block"`
+	Command      []string          `hcl:"command,optional"`
+	Args         []string          `hcl:"args,optional"`
+	Env          *Env              `hcl:"env,block"`
+	Ports        []Port            `hcl:"port,block"`
+	Resources    *Resources        `hcl:"resources,block"`
+	Mounts       []Mount           `hcl:"mount,block"`
+	Health       *Health           `hcl:"health,block"`
 }
 
 type Stateful struct {
-	Name    string           `hcl:"name,label"`
-	Scope   string           `hcl:"scope,optional"`
-	Image   string           `hcl:"image,attr"`
+	Name         string            `hcl:"name,label"`
+	Scope        string            `hcl:"scope,optional"`
+	Image        string            `hcl:"image,attr"`
 	NodeSelector map[string]string `hcl:"node_selector,optional"`
-	Env     *Env             `hcl:"env,block"`
-	Ports   []Port           `hcl:"port,block"`
-	Volumes []StatefulVolume `hcl:"volume,block"`
-	Mounts  []Mount          `hcl:"mount,block"`
+	Env          *Env              `hcl:"env,block"`
+	Ports        []Port            `hcl:"port,block"`
+	Volumes      []StatefulVolume  `hcl:"volume,block"`
+	Mounts       []Mount           `hcl:"mount,block"`
 }
 
 type StatefulVolume struct {
@@ -153,27 +148,27 @@ type StatefulVolume struct {
 }
 
 type Job struct {
-	Name    string   `hcl:"name,label"`
-	Scope   string   `hcl:"scope,optional"`
-	Image   string   `hcl:"image,attr"`
+	Name         string            `hcl:"name,label"`
+	Scope        string            `hcl:"scope,optional"`
+	Image        string            `hcl:"image,attr"`
 	NodeSelector map[string]string `hcl:"node_selector,optional"`
-	Command []string `hcl:"command,optional"`
-	Args    []string `hcl:"args,optional"`
-	Retries *int32   `hcl:"retries,optional"`
-	Env     *Env     `hcl:"env,block"`
-	Mounts  []Mount  `hcl:"mount,block"`
+	Command      []string          `hcl:"command,optional"`
+	Args         []string          `hcl:"args,optional"`
+	Retries      *int32            `hcl:"retries,optional"`
+	Env          *Env              `hcl:"env,block"`
+	Mounts       []Mount           `hcl:"mount,block"`
 }
 
 type Cron struct {
-	Name     string   `hcl:"name,label"`
-	Scope    string   `hcl:"scope,optional"`
-	Image    string   `hcl:"image,attr"`
+	Name         string            `hcl:"name,label"`
+	Scope        string            `hcl:"scope,optional"`
+	Image        string            `hcl:"image,attr"`
 	NodeSelector map[string]string `hcl:"node_selector,optional"`
-	Schedule string   `hcl:"schedule,attr"`
-	Command  []string `hcl:"command,optional"`
-	Args     []string `hcl:"args,optional"`
-	Retries  *int32   `hcl:"retries,optional"`
-	Env      *Env     `hcl:"env,block"`
+	Schedule     string            `hcl:"schedule,attr"`
+	Command      []string          `hcl:"command,optional"`
+	Args         []string          `hcl:"args,optional"`
+	Retries      *int32            `hcl:"retries,optional"`
+	Env          *Env              `hcl:"env,block"`
 }
 
 type Env struct {
@@ -218,11 +213,23 @@ type Route struct {
 	Paths       []RoutePath       `hcl:"path,block"`
 	TLSSecret   string            `hcl:"tls_secret,optional"`
 	Annotations map[string]string `hcl:"annotations,optional"`
+	Middleware  *RouteMiddleware  `hcl:"middleware,block"`
 }
 
 type RoutePath struct {
 	Path string `hcl:"path,label"`
 	Port *int32 `hcl:"port,optional"`
+}
+
+type RouteMiddleware struct {
+	Headers *MiddlewareHeaders `hcl:"headers,block"`
+}
+
+type MiddlewareHeaders struct {
+	AllowOrigins     []string `hcl:"allow_origins,optional"`
+	AllowMethods     []string `hcl:"allow_methods,optional"`
+	AllowHeaders     []string `hcl:"allow_headers,optional"`
+	AllowCredentials *bool    `hcl:"allow_credentials,optional"`
 }
 
 type Manifest struct {
