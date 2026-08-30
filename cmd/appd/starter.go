@@ -176,6 +176,7 @@ cron "name" {
   args = []
   retries = 3
   env { ... }
+  mount { volume = volume.data path = "/data" }
 }
   Creates a CronJob that runs on a schedule.
 

@@ -17,16 +17,16 @@ func HasExpression(expression hcl.Expression) bool {
 }
 
 type Model struct {
-	Namespaces  []Namespace  `hcl:"namespace,block"`
-	Configs     []Config     `hcl:"config,block"`
-	Secrets     []SecretHCL  `hcl:"secret,block"`
-	Volumes     []Volume     `hcl:"volume,block"`
-	Apps        []App        `hcl:"app,block"`
-	Statefuls   []Stateful   `hcl:"stateful,block"`
-	Jobs        []Job        `hcl:"job,block"`
-	Crons       []Cron       `hcl:"cron,block"`
-	Routes    []Route    `hcl:"route,block"`
-	Manifests   []Manifest   `hcl:"manifest,block"`
+	Namespaces []Namespace `hcl:"namespace,block"`
+	Configs    []Config    `hcl:"config,block"`
+	Secrets    []SecretHCL `hcl:"secret,block"`
+	Volumes    []Volume    `hcl:"volume,block"`
+	Apps       []App       `hcl:"app,block"`
+	Statefuls  []Stateful  `hcl:"stateful,block"`
+	Jobs       []Job       `hcl:"job,block"`
+	Crons      []Cron      `hcl:"cron,block"`
+	Routes     []Route     `hcl:"route,block"`
+	Manifests  []Manifest  `hcl:"manifest,block"`
 
 	SourcePath string
 }
@@ -169,6 +169,7 @@ type Cron struct {
 	Args         []string          `hcl:"args,optional"`
 	Retries      *int32            `hcl:"retries,optional"`
 	Env          *Env              `hcl:"env,block"`
+	Mounts       []Mount           `hcl:"mount,block"`
 }
 
 type Env struct {

@@ -54,6 +54,11 @@ func buildCronJobs(model config.Model, namespace string) ([]client.Object, error
 		if err != nil {
 			return nil, fmt.Errorf("cron %q: %w", cron.Name, err)
 		}
+		mounts, volumes, err := buildMounts(cron.Mounts)
+		if err != nil {
+			return nil, fmt.Errorf("cron %q: %w", cron.Name, err)
+		}
+		container.VolumeMounts = mounts
 
 		objects = append(objects, &batchv1.CronJob{
 			ObjectMeta: metav1.ObjectMeta{Name: cron.Name, Namespace: namespace},
@@ -65,6 +70,7 @@ func buildCronJobs(model config.Model, namespace string) ([]client.Object, error
 						NodeSelector: cron.NodeSelector,
 						RestartPolicy: corev1.RestartPolicyNever,
 						Containers:    []corev1.Container{container},
+						Volumes:       volumes,
 					}},
 				}},
 			},

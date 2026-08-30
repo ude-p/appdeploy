@@ -181,7 +181,7 @@ func (model Model) Validate() error {
 	if err := validateJobs(model.Jobs, namespaces, volumes, configs, secrets); err != nil {
 		return err
 	}
-	if err := validateCrons(model.Crons, namespaces, configs, secrets); err != nil {
+	if err := validateCrons(model.Crons, namespaces, volumes, configs, secrets); err != nil {
 		return err
 	}
 
@@ -301,7 +301,7 @@ func validateJobs(jobs []Job, namespaces, volumes, configs, secrets map[string]s
 	return nil
 }
 
-func validateCrons(crons []Cron, namespaces, configs, secrets map[string]struct{}) error {
+func validateCrons(crons []Cron, namespaces, volumes, configs, secrets map[string]struct{}) error {
 	names := make(map[string]struct{}, len(crons))
 	for _, cron := range crons {
 		if err := addName(names, "cron", cron.Name); err != nil {
@@ -312,6 +312,11 @@ func validateCrons(crons []Cron, namespaces, configs, secrets map[string]struct{
 		}
 		if err := validateEnv(cron.Env, configs, secrets); err != nil {
 			return fmt.Errorf("cron %q: %w", cron.Name, err)
+		}
+		for _, mount := range cron.Mounts {
+			if err := validateMount(mount, volumes, configs, secrets); err != nil {
+				return fmt.Errorf("cron %q mount: %w", cron.Name, err)
+			}
 		}
 	}
 	return nil
