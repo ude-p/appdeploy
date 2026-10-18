@@ -170,22 +170,11 @@ func buildMounts(mounts []config.Mount) ([]corev1.VolumeMount, []corev1.Volume, 
 }
 
 func buildService(app config.App, namespace string) *corev1.Service {
-	ports := make([]corev1.ServicePort, 0, len(app.Ports))
-	for _, port := range app.Ports {
-		containerPort := port.Container
-		if containerPort == 0 {
-			containerPort = port.Service
-		}
-		ports = append(ports, corev1.ServicePort{
-			Port:       port.Service,
-			TargetPort: intstr.FromInt32(containerPort),
-		})
-	}
 	return &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{Name: app.Name, Namespace: namespace},
 		Spec: corev1.ServiceSpec{
 			Selector: map[string]string{"app.kubernetes.io/name": app.Name},
-			Ports:    ports,
+			Ports:    servicePorts(app.Ports),
 		},
 	}
 }

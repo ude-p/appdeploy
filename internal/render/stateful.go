@@ -8,7 +8,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/intstr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -80,20 +79,12 @@ func buildStatefulSets(model config.Model, namespace string) ([]client.Object, e
 			},
 		})
 
-		ports := make([]corev1.ServicePort, 0, len(stateful.Ports))
-		for _, port := range stateful.Ports {
-			containerPort := port.Container
-			if containerPort == 0 {
-				containerPort = port.Service
-			}
-			ports = append(ports, corev1.ServicePort{Port: port.Service, TargetPort: intstr.FromInt32(containerPort)})
-		}
 		objects = append(objects, &corev1.Service{
 			ObjectMeta: metav1.ObjectMeta{Name: stateful.Name, Namespace: namespace},
 			Spec: corev1.ServiceSpec{
 				ClusterIP: corev1.ClusterIPNone,
 				Selector:  labels,
-				Ports:     ports,
+				Ports:     servicePorts(stateful.Ports),
 			},
 		})
 	}
