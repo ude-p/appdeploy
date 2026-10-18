@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strings"
 
 	"github.com/ude-p/appdeploy/internal/config"
 	"github.com/ude-p/appdeploy/internal/render"
@@ -127,18 +126,11 @@ func initialize(args []string) {
 	}
 }
 
-func explain(args []string) {
-	if len(args) != 0 {
-		fail(fmt.Errorf("explain does not accept arguments"))
-	}
-	mustFprintln(os.Stdout, strings.TrimSpace(schemaExplain))
-}
-
 func usage() {
 	mustFprintln(os.Stderr, "Usage: appd <command>")
 	mustFprintln(os.Stderr, "\nCommands:")
 	mustFprintln(os.Stderr, "  init    create deploy.hcl in the current directory")
-	mustFprintln(os.Stderr, "  explain describe the AppDeploy schema")
+	mustFprintln(os.Stderr, "  explain list schema topics or describe one")
 	mustFprintln(os.Stderr, "  run     build Kubernetes resources")
 }
 
