@@ -8,7 +8,6 @@ import (
 	"github.com/ude-p/appdeploy/internal/config"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -46,8 +45,8 @@ func buildApps(model config.Model, namespace string) ([]client.Object, error) {
 					ObjectMeta: metav1.ObjectMeta{Labels: labels},
 					Spec: corev1.PodSpec{
 						NodeSelector: nodeSelector(model, app.NodeSelector),
-						Containers: []corev1.Container{container},
-						Volumes:    volumes,
+						Containers:   []corev1.Container{container},
+						Volumes:      volumes,
 					},
 				},
 			},
@@ -79,23 +78,9 @@ func buildContainer(model config.Model, app config.App) (corev1.Container, []cor
 		container.Ports = append(container.Ports, corev1.ContainerPort{ContainerPort: port})
 	}
 
-	resources := app.Resources
-	if resources == nil && model.Defaults != nil {
-		resources = model.Defaults.Resources
-	}
-	if resources != nil {
-		cpu, err := resource.ParseQuantity(resources.CPU)
-		if err != nil {
-			return corev1.Container{}, nil, fmt.Errorf("parse CPU: %w", err)
-		}
-		memory, err := resource.ParseQuantity(resources.Memory)
-		if err != nil {
-			return corev1.Container{}, nil, fmt.Errorf("parse memory: %w", err)
-		}
-		container.Resources = corev1.ResourceRequirements{
-			Requests: corev1.ResourceList{corev1.ResourceCPU: cpu, corev1.ResourceMemory: memory},
-			Limits:   corev1.ResourceList{corev1.ResourceCPU: cpu, corev1.ResourceMemory: memory},
-		}
+	container.Resources, err = containerResources(resolveContainerResources(app.Resources, model))
+	if err != nil {
+		return corev1.Container{}, nil, err
 	}
 
 	configureProbes(&container, app.Health, ports)

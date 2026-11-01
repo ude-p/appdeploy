@@ -33,6 +33,11 @@ func buildStatefulSets(model config.Model, namespace string) ([]client.Object, e
 			container.Ports = append(container.Ports, corev1.ContainerPort{ContainerPort: port})
 		}
 		configureProbes(&container, stateful.Health, ports)
+
+		container.Resources, err = containerResources(resolveContainerResources(nil, model))
+		if err != nil {
+			return nil, fmt.Errorf("stateful %q: %w", stateful.Name, err)
+		}
 		mounts, volumes, err := buildMounts(stateful.Mounts)
 		if err != nil {
 			return nil, fmt.Errorf("stateful %q: %w", stateful.Name, err)
@@ -75,7 +80,7 @@ func buildStatefulSets(model config.Model, namespace string) ([]client.Object, e
 				VolumeClaimTemplates: claimTemplates,
 				Template: corev1.PodTemplateSpec{
 					ObjectMeta: metav1.ObjectMeta{Labels: labels},
-					Spec: corev1.PodSpec{NodeSelector: nodeSelector(model, stateful.NodeSelector), Containers: []corev1.Container{container}, Volumes: volumes},
+					Spec:       corev1.PodSpec{NodeSelector: nodeSelector(model, stateful.NodeSelector), Containers: []corev1.Container{container}, Volumes: volumes},
 				},
 			},
 		})
