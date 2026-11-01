@@ -15,17 +15,42 @@ type schemaTopic struct {
 // Topics follow the Model order, with scope last because it applies across blocks.
 // Bodies are raw strings so their HCL keeps its own indentation.
 var (
-	namespaceTopic = schemaTopic{
-		name:    "namespace",
-		summary: "Declare a namespace to render into",
+	namespacesTopic = schemaTopic{
+		name:    "namespaces",
+		summary: "List the namespaces to render into",
 		body: `
-			namespace "prod" {}
+			namespaces = ["prod", "staging"]
 
-			Declares a namespace AppDeploy can render into. At least one namespace is
-			required. Every other block renders into one or more declared namespaces.
+			Lists the namespaces AppDeploy renders into. At least one is required.
+			Every other block renders into all of them unless it sets scope.
+`,
+	}
 
-			Fields:
-			  name (label)  required  namespace name
+	defaultsTopic = schemaTopic{
+		name:    "defaults",
+		summary: "Set defaults shared by workloads",
+		body: `
+			defaults {
+			  replicas = 2
+
+			  node_selector = { "workload" = "general" }
+
+			  ingress_class = "traefik"
+
+			  ingress_annotations = {
+			    "cert-manager.io/cluster-issuer" = "letsencrypt"
+			  }
+
+			  resources {
+			    cpu    = "250m"
+			    memory = "256Mi"
+			  }
+			}
+
+			Sets values used when a workload does not declare its own. app blocks
+			override replicas, resources, and node_selector. ingress_class and
+			ingress_annotations apply to every route; route annotations override
+			them.
 `,
 	}
 
@@ -33,17 +58,11 @@ var (
 		name:    "config",
 		summary: "Build a ConfigMap from values, files, and .env",
 		body: `
-			config "app" {
-			  env {
-			    source = ".env"
-			    prefix = "CONFIG_"
-			  }
+			config "server-config" {
+			  source = "./secrets/.env"
+			  prefix = "CONFIG_"
 
 			  LOG_LEVEL = "info"
-
-			  data = {
-			    "file.txt" = "content"
-			  }
 
 			  file "init.sql" {
 			    source = "./init.sql"
@@ -57,14 +76,15 @@ var (
 			Builds a ConfigMap.
 
 			Sources:
-			  env     read a .env file; prefix is stripped from keys
-			  inline  string attributes such as LOG_LEVEL = "info"
-			  data    map of file name to content
+			  source  read a .env file; prefix is stripped from keys
+			  values  string attributes such as LOG_LEVEL = "info"
 			  file    read a real file; the label is the key
 			  scope   per-namespace overrides, applied on top of the base
 
-			A scoped file replaces the base file with the same name. The base
-			definition stays in one place.
+			A scoped file replaces the base file with the same name.
+
+			Declare config inside a workload env block to generate it as
+			<workload>-config. Declare it here to share it across workloads.
 `,
 	}
 
@@ -72,26 +92,25 @@ var (
 		name:    "secret",
 		summary: "Build a Secret from .env values and files",
 		body: `
-			secret "app" {
-			  env {
-			    source = ".env"
-			    prefix = "SECRET_"
-			  }
+			secret "server-secret" {
+			  source = "./secrets/.env"
+			  prefix = "SECRET_"
 
 			  file "tls.crt" {
 			    source = "./tls.crt"
 			  }
 
 			  scope "staging" {
-			    env {
-			      source = ".env.staging"
-			      prefix = "SECRET_"
-			    }
+			    source = "./secrets/.env.staging"
+			    prefix = "SECRET_"
 			  }
 			}
 
-			Builds a Secret. It uses the same sources as config, without inline
-			values or data.
+			Builds a Secret. It uses the same sources as config, without
+			inline values.
+
+			Declare secret inside a workload env block to generate it as
+			<workload>-secret. Declare it here to share it across workloads.
 
 			Secrets are sent to Kubernetes as plain text (stringData). Keep
 			appd run -o output out of version control.
@@ -133,15 +152,15 @@ var (
 			  args    = []
 
 			  env {
-			    config = config.app
-			    secret = secret.app
-			    field "POD_NAME" { path = "metadata.name" }
+			    LOG_LEVEL = "info"
+
+			    config {
+			      source = "./secrets/.env"
+			      prefix = "CONFIG_"
+			    }
 			  }
 
-			  port {
-			    service   = 80
-			    container = 3000
-			  }
+			  port = 80
 
 			  resources {
 			    cpu    = "500m"
@@ -155,22 +174,35 @@ var (
 
 			  health {
 			    path = "/health"
-			    port = 3000
+			  }
+
+			  route "api" {
+			    host  = "api.example.com"
+			    paths = ["/"]
+			    tls   = "api-tls"
 			  }
 			}
 
 			Creates a Deployment and, when at least one port is declared, a Service.
+			Each route creates an Ingress for this app.
+
+			Every container receives POD_NAME, POD_NAMESPACE, POD_IP, POD_UID,
+			NODE_NAME, and HOST_IP. Do not declare them in env.
 
 			Fields:
 			  image          required  pulled with Always
-			  replicas       optional  default 1
+			  replicas       optional  default 1 or defaults.replicas
 			  node_selector  optional  map of node labels
 			  command, args  optional  override the image entrypoint
-			  env            optional  ConfigMap and Secret references, plus field refs
-			  port           optional  container defaults to the service port
-			  resources      optional  requests and limits are set to the same values
+			  env            optional  inline values, config, and secret
+			  port           optional  one port; the container port matches
+			  ports          optional  several ports, as a list
+			  resources      optional  default defaults.resources; requests and
+			                           limits are set to the same values
 			  mount          optional  exactly one of volume, config, or secret, plus path
-			  health         optional  one HTTP GET used for liveness and readiness
+			  health         optional  HTTP probe; port defaults to the first port.
+			                           Without this block the first port gets a TCP probe
+			  route          optional  Ingress for this app; repeatable
 			  scope          optional  render only into this namespace
 `,
 	}
@@ -185,12 +217,10 @@ var (
 			  node_selector = { "workload" = "storage" }
 
 			  env {
-			    config = config.db
+			    from_config = config.db
 			  }
 
-			  port {
-			    service = 5432
-			  }
+			  port = 5432
 
 			  volume "data" {
 			    size          = "20Gi"
@@ -203,6 +233,10 @@ var (
 			    config = config.init
 			    path   = "/docker-entrypoint-initdb.d"
 			  }
+
+			  health {
+			    path = "/health"
+			  }
 			}
 
 			Creates a StatefulSet and a headless Service. Runs one replica.
@@ -210,10 +244,13 @@ var (
 			Fields:
 			  image          required  pulled with Always
 			  node_selector  optional  map of node labels
-			  env            optional  ConfigMap and Secret references, plus field refs
-			  port           optional  service port
+			  env            optional  inline values, config, and secret
+			  port           optional  one port; the container port matches
+			  ports          optional  several ports, as a list
 			  volume         optional  becomes a PVC template; path is the mount path
 			  mount          optional  exactly one of volume, config, or secret, plus path
+			  health         optional  HTTP probe; port defaults to the first port.
+			                           Without this block the first port gets a TCP probe
 			  scope          optional  render only into this namespace
 `,
 	}
@@ -231,7 +268,7 @@ var (
 			  node_selector = { "workload" = "storage" }
 
 			  env {
-			    config = config.app
+			    from_config = config.app
 			  }
 
 			  mount {
@@ -241,72 +278,49 @@ var (
 			}
 
 			Creates a Job with restartPolicy Never. retries sets backoffLimit.
+			With schedule, creates a CronJob instead; schedule uses the standard
+			five-field cron format.
 
 			Re-applying a completed Job does not run it again; delete the Job to
 			run it again.
 `,
 	}
 
-	cronTopic = schemaTopic{
-		name:    "cron",
-		summary: "Create a CronJob",
-		body: `
-			cron "cleanup" {
-			  image    = "ghcr.io/example/api:1.4.0"
-			  schedule = "0 2 * * *"
-			  command  = ["/app/cleanup"]
-			  args     = []
-			  retries  = 3
-
-			  node_selector = { "workload" = "storage" }
-
-			  env {
-			    config = config.app
-			  }
-			}
-
-			Creates a CronJob with restartPolicy Never. retries sets backoffLimit.
-			schedule uses the standard five-field cron format.
-`,
-	}
-
 	routeTopic = schemaTopic{
 		name:    "route",
-		summary: "Create an Ingress and optional Traefik middleware",
+		summary: "Create an Ingress for an app",
 		body: `
-			route "api" {
-			  to         = app.api
-			  host       = "api.example.com"
-			  class_name = "traefik"
-			  tls_secret = "api-tls"
+			app "api" {
+			  image = "ghcr.io/example/api:1.4.0"
+			  port  = 80
 
-			  path "/" {}
+			  route "api" {
+			    host  = "api.example.com"
+			    paths = ["/", "/metrics"]
+			    tls   = "api-tls"
 
-			  path "/metrics" {
-			    port = 9090
-			  }
-
-			  annotations = {
-			    "example.com/owner" = "platform"
-			  }
-
-			  middleware {
-			    headers {
-			      allow_origins     = ["https://app.example.com"]
-			      allow_methods     = ["GET", "POST"]
-			      allow_headers     = ["Content-Type"]
-			      allow_credentials = true
+			    annotations = {
+			      "example.com/owner" = "platform"
 			    }
 			  }
 			}
 
-			Creates an Ingress for an app. to must reference an app with a port.
-			A path without port uses the app's first service port. Paths are
-			Prefix type.
+			Creates an Ingress for the app it is declared in. The app must have a
+			port, or the route must set port. Without path or paths, the route
+			uses /.
 
-			middleware creates a Traefik Middleware named <route>-middleware and
-			adds the router annotation to the Ingress. allow_origins and
-			allow_methods are required. Traefik CRDs must be installed.
+			Fields:
+			  host         required  host name
+			  path         optional  one path; defaults to /
+			  paths        optional  several paths, as a list
+			  port         optional  service port; defaults to the app's first port
+			  tls          optional  Secret name for TLS
+			  annotations  optional  merged over defaults.ingress_annotations
+			  scope        optional  restrict the Ingress to one namespace
+
+			ingress_class and ingress_annotations come from defaults.
+			Without scope, the route renders wherever the app renders.
+			Paths are Prefix type.
 `,
 	}
 
@@ -333,13 +347,53 @@ var (
 `,
 	}
 
+	envTopic = schemaTopic{
+		name:    "env",
+		summary: "Attach environment to a workload",
+		body: `
+			env {
+			  LOG_LEVEL = "info"
+
+			  config {
+			    source = "./secrets/.env"
+			    prefix = "CONFIG_"
+			  }
+
+			  secret {
+			    source = "./secrets/.env"
+			    prefix = "SECRET_"
+			  }
+
+			  from_config = config.shared
+			  from_secret = secret.shared
+			}
+
+			Attaches environment variables to an app, stateful, job, or cron.
+
+			Sources:
+			  values       string attributes become container environment variables
+			  config       creates <workload>-config from source, values, and files
+			  secret       creates <workload>-secret from source and files
+			  from_config  reuse a top-level config block
+			  from_secret  reuse a top-level secret block
+
+			Use from_config and from_secret when several workloads share one
+			config or secret.
+
+			POD_NAME, POD_NAMESPACE, POD_IP, POD_UID, NODE_NAME, and HOST_IP are
+			always set from the pod. Do not declare them.
+`,
+	}
+
 	scopeTopic = schemaTopic{
 		name:    "scope",
 		summary: "How a block chooses its namespace",
 		body: `
 			scope = "staging"
 
-			Every block except namespace, volume, and manifest accepts scope.
+			Every block except defaults, volume, and manifest accepts scope.
+			Namespaces are listed at the top level. A route also follows the
+			app it is declared in.
 
 			Without scope, the block renders into every declared namespace.
 			With scope, the block renders only into that namespace.
@@ -352,16 +406,17 @@ var (
 )
 
 var schemaTopics = []schemaTopic{
-	namespaceTopic,
+	namespacesTopic,
+	defaultsTopic,
 	configTopic,
 	secretTopic,
 	volumeTopic,
 	appTopic,
 	statefulTopic,
 	jobTopic,
-	cronTopic,
 	routeTopic,
 	manifestTopic,
+	envTopic,
 	scopeTopic,
 }
 

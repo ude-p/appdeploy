@@ -1,126 +1,99 @@
 package render
 
 import (
-	"fmt"
+	"maps"
 
 	"github.com/ude-p/appdeploy/internal/config"
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-func buildRouteMiddlewares(model config.Model, namespace string) ([]client.Object, error) {
-	objects := make([]client.Object, 0, len(model.Routes))
-	for _, route := range model.Routes {
-		if route.Scope != "" && route.Scope != namespace || route.Middleware == nil {
-			continue
-		}
-
-		headers := route.Middleware.Headers
-		specHeaders := map[string]any{
-			"accessControlAllowOriginList": headers.AllowOrigins,
-			"accessControlAllowMethods":    headers.AllowMethods,
-		}
-		if len(headers.AllowHeaders) > 0 {
-			specHeaders["accessControlAllowHeaders"] = headers.AllowHeaders
-		}
-		if headers.AllowCredentials != nil {
-			specHeaders["accessControlAllowCredentials"] = *headers.AllowCredentials
-		}
-		objects = append(objects, &unstructured.Unstructured{Object: map[string]any{
-			"apiVersion": "traefik.io/v1alpha1",
-			"kind":       "Middleware",
-			"metadata": map[string]any{
-				"name":      route.Name + "-middleware",
-				"namespace": namespace,
-			},
-			"spec": map[string]any{
-				"headers": specHeaders,
-			},
-		}})
-	}
-	return objects, nil
-}
-
 func buildIngresses(model config.Model, namespace string) ([]client.Object, error) {
-	objects := make([]client.Object, 0, len(model.Routes))
-	for _, route := range model.Routes {
-		if route.Scope != "" && route.Scope != namespace {
+	objects := make([]client.Object, 0)
+	for _, app := range model.Apps {
+		if app.Scope != "" && app.Scope != namespace {
 			continue
 		}
-		appName, err := referenceName(route.To)
-		if err != nil {
-			return nil, fmt.Errorf("route %q: %w", route.Name, err)
-		}
-		appPorts, err := appServicePorts(model.Apps, appName)
-		if err != nil {
-			return nil, fmt.Errorf("route %q: %w", route.Name, err)
-		}
-		prefix := networkingv1.PathTypePrefix
-		paths := route.Paths
-		if len(paths) == 0 {
-			paths = []config.RoutePath{{Path: "/"}}
-		}
-		ingressPaths := make([]networkingv1.HTTPIngressPath, 0, len(paths))
-		for _, path := range paths {
-			port := appPorts[0]
-			if path.Port != nil {
-				port = *path.Port
+		for _, route := range app.Routes {
+			if route.Scope != "" && route.Scope != namespace {
+				continue
 			}
-			ingressPaths = append(ingressPaths, networkingv1.HTTPIngressPath{
-				Path:     path.Path,
-				PathType: &prefix,
-				Backend: networkingv1.IngressBackend{Service: &networkingv1.IngressServiceBackend{
-					Name: appName,
-					Port: networkingv1.ServiceBackendPort{Number: port},
-				}},
-			})
-		}
+			paths := route.Paths
+			if route.Path != "" {
+				paths = []string{route.Path}
+			}
+			if len(paths) == 0 {
+				paths = []string{"/"}
+			}
+			port := int32(0)
+			if route.Port != nil {
+				port = *route.Port
+			}
+			if port == 0 {
+				port = app.ServicePorts()[0]
+			}
 
-		ingress := &networkingv1.Ingress{
-			ObjectMeta: metav1.ObjectMeta{Name: route.Name, Namespace: namespace},
-			Spec: networkingv1.IngressSpec{
-				Rules: []networkingv1.IngressRule{{
-					Host: route.Host,
-					IngressRuleValue: networkingv1.IngressRuleValue{
-						HTTP: &networkingv1.HTTPIngressRuleValue{Paths: ingressPaths},
-					},
-				}},
-			},
-		}
-		if route.ClassName != "" {
-			ingress.Spec.IngressClassName = &route.ClassName
-		}
-		if len(route.Annotations) > 0 {
-			ingress.Annotations = route.Annotations
-		}
-		if route.Middleware != nil {
-			if ingress.Annotations == nil {
-				ingress.Annotations = make(map[string]string)
+			prefix := networkingv1.PathTypePrefix
+			ingressPaths := make([]networkingv1.HTTPIngressPath, 0, len(paths))
+			for _, path := range paths {
+				ingressPaths = append(ingressPaths, networkingv1.HTTPIngressPath{
+					Path:     path,
+					PathType: &prefix,
+					Backend: networkingv1.IngressBackend{Service: &networkingv1.IngressServiceBackend{
+						Name: app.Name,
+						Port: networkingv1.ServiceBackendPort{Number: port},
+					}},
+				})
 			}
-			ingress.Annotations["traefik.ingress.kubernetes.io/router.middlewares"] = namespace + "-" + route.Name + "-middleware@kubernetescrd"
+
+			ingress := &networkingv1.Ingress{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:        route.Name,
+					Namespace:   namespace,
+					Annotations: ingressAnnotations(model, route),
+				},
+				Spec: networkingv1.IngressSpec{
+					Rules: []networkingv1.IngressRule{{
+						Host: route.Host,
+						IngressRuleValue: networkingv1.IngressRuleValue{
+							HTTP: &networkingv1.HTTPIngressRuleValue{Paths: ingressPaths},
+						},
+					}},
+				},
+			}
+			if class := ingressClass(model); class != "" {
+				ingress.Spec.IngressClassName = &class
+			}
+			if route.TLS != "" {
+				ingress.Spec.TLS = []networkingv1.IngressTLS{{
+					Hosts:      []string{route.Host},
+					SecretName: route.TLS,
+				}}
+			}
+			objects = append(objects, ingress)
 		}
-		if route.TLSSecret != "" {
-			ingress.Spec.TLS = []networkingv1.IngressTLS{{
-				Hosts:      []string{route.Host},
-				SecretName: route.TLSSecret,
-			}}
-		}
-		objects = append(objects, ingress)
 	}
 	return objects, nil
 }
 
-func appServicePorts(apps []config.App, name string) ([]int32, error) {
-	for _, app := range apps {
-		if app.Name == name && len(app.Ports) > 0 {
-			ports := make([]int32, 0, len(app.Ports))
-			for _, port := range app.Ports {
-				ports = append(ports, port.Service)
-			}
-			return ports, nil
-		}
+func ingressClass(model config.Model) string {
+	if model.Defaults != nil {
+		return model.Defaults.IngressClass
 	}
-	return nil, fmt.Errorf("app %q has no service port", name)
+	return ""
+}
+
+func ingressAnnotations(model config.Model, route config.Route) map[string]string {
+	var annotations map[string]string
+	if model.Defaults != nil {
+		annotations = maps.Clone(model.Defaults.IngressAnnotations)
+	}
+	for name, value := range route.Annotations {
+		if annotations == nil {
+			annotations = make(map[string]string)
+		}
+		annotations[name] = value
+	}
+	return annotations
 }

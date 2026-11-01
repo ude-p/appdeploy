@@ -26,62 +26,42 @@ func buildJobs(model config.Model, namespace string) ([]client.Object, error) {
 		}
 		container.VolumeMounts = mounts
 
-		objects = append(objects, &batchv1.Job{
-			ObjectMeta: metav1.ObjectMeta{Name: job.Name, Namespace: namespace},
-			Spec: batchv1.JobSpec{
-				BackoffLimit: job.Retries,
-				Template: corev1.PodTemplateSpec{
-					Spec: corev1.PodSpec{
-					NodeSelector:   job.NodeSelector,
-					RestartPolicy: corev1.RestartPolicyNever,
-					Containers:    []corev1.Container{container},
-					Volumes:       volumes,
-					},
+		resources, err := inlineResources(model, namespace, job.Name, job.Env)
+		if err != nil {
+			return nil, fmt.Errorf("job %q: %w", job.Name, err)
+		}
+		objects = append(objects, resources...)
+
+		jobSpec := batchv1.JobSpec{
+			BackoffLimit: job.Retries,
+			Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{
+				NodeSelector:  nodeSelector(model, job.NodeSelector),
+				RestartPolicy: corev1.RestartPolicyNever,
+				Containers:    []corev1.Container{container},
+				Volumes:       volumes,
+			}},
+		}
+		if job.Schedule == "" {
+			objects = append(objects, &batchv1.Job{
+				ObjectMeta: metav1.ObjectMeta{Name: job.Name, Namespace: namespace},
+				Spec:       jobSpec,
+			})
+		} else {
+			objects = append(objects, &batchv1.CronJob{
+				ObjectMeta: metav1.ObjectMeta{Name: job.Name, Namespace: namespace},
+				Spec: batchv1.CronJobSpec{
+					Schedule:    job.Schedule,
+					JobTemplate: batchv1.JobTemplateSpec{Spec: jobSpec},
 				},
-			},
-		})
-	}
-	return objects, nil
-}
-
-func buildCronJobs(model config.Model, namespace string) ([]client.Object, error) {
-	objects := make([]client.Object, 0, len(model.Crons))
-	for _, cron := range model.Crons {
-		if cron.Scope != "" && cron.Scope != namespace {
-			continue
+			})
 		}
-		container, err := buildJobContainer(cron.Name, cron.Image, cron.Command, cron.Args, cron.Env)
-		if err != nil {
-			return nil, fmt.Errorf("cron %q: %w", cron.Name, err)
-		}
-		mounts, volumes, err := buildMounts(cron.Mounts)
-		if err != nil {
-			return nil, fmt.Errorf("cron %q: %w", cron.Name, err)
-		}
-		container.VolumeMounts = mounts
-
-		objects = append(objects, &batchv1.CronJob{
-			ObjectMeta: metav1.ObjectMeta{Name: cron.Name, Namespace: namespace},
-			Spec: batchv1.CronJobSpec{
-				Schedule: cron.Schedule,
-				JobTemplate: batchv1.JobTemplateSpec{Spec: batchv1.JobSpec{
-					BackoffLimit: cron.Retries,
-					Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{
-						NodeSelector: cron.NodeSelector,
-						RestartPolicy: corev1.RestartPolicyNever,
-						Containers:    []corev1.Container{container},
-						Volumes:       volumes,
-					}},
-				}},
-			},
-		})
 	}
 	return objects, nil
 }
 
 func buildJobContainer(name, image string, command, args []string, env *config.Env) (corev1.Container, error) {
 	container := corev1.Container{Name: name, Image: image, ImagePullPolicy: corev1.PullAlways, Command: command, Args: args}
-	envFrom, fields, err := buildEnv(env)
+	envFrom, fields, err := buildEnv(name, env)
 	if err != nil {
 		return corev1.Container{}, err
 	}

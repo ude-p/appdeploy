@@ -8,6 +8,7 @@ import (
 
 	"github.com/ude-p/appdeploy/internal/config"
 	"github.com/ude-p/appdeploy/internal/render"
+	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -20,8 +21,6 @@ func main() {
 	switch os.Args[1] {
 	case "run":
 		run(os.Args[2:])
-	case "init":
-		initialize(os.Args[2:])
 	case "explain":
 		explain(os.Args[2:])
 	case "-h", "--help", "help":
@@ -34,29 +33,30 @@ func main() {
 func run(args []string) {
 	flags := flag.NewFlagSet("appd run", flag.ExitOnError)
 	flags.Usage = func() {
-		mustFprintln(flags.Output(), "Usage: appd run [-o] [-f deploy.hcl] [-n namespace] [--kubeconfig path] [--ctx name]")
+		mustFprintln(flags.Output(), "Usage: appd run [-o | --kustomize dir] [-f deploy.hcl] [-n namespace] [--kubeconfig path] [--ctx name]")
 		flags.PrintDefaults()
 	}
 
 	path := "deploy.hcl"
 	namespace := ""
 	output := false
+	kustomize := ""
 	context := ""
 	kubeconfig := ""
 	flags.StringVar(&path, "f", path, "path to the AppDeploy HCL file")
-	flags.StringVar(&path, "file", path, "path to the AppDeploy HCL file")
 	flags.StringVar(&namespace, "n", namespace, "render one declared namespace")
-	flags.StringVar(&namespace, "namespace", namespace, "render one declared namespace")
 	flags.BoolVar(&output, "o", false, "write Kubernetes YAML to stdout for inspection")
-	flags.BoolVar(&output, "output", false, "write Kubernetes YAML to stdout for inspection")
+	flags.StringVar(&kustomize, "kustomize", kustomize, "write kustomized manifests with encrypted secrets to this directory")
 	flags.StringVar(&context, "ctx", context, "Kubernetes context to use")
-	flags.StringVar(&context, "context", context, "Kubernetes context to use")
 	flags.StringVar(&kubeconfig, "kubeconfig", kubeconfig, "path to kubeconfig file")
 	if err := flags.Parse(args); err != nil {
 		fail(err)
 	}
 	if flags.NArg() != 0 {
 		fail(fmt.Errorf("unexpected arguments: %v", flags.Args()))
+	}
+	if output && kustomize != "" {
+		fail(fmt.Errorf("cannot use -o with --kustomize"))
 	}
 
 	model, err := config.ParseHCL(path)
@@ -71,9 +71,14 @@ func run(args []string) {
 	if namespace != "" {
 		namespaces = append(namespaces, namespace)
 	} else {
-		for _, item := range model.Namespaces {
-			namespaces = append(namespaces, item.Name)
+		namespaces = append(namespaces, model.Namespaces...)
+	}
+
+	if kustomize != "" {
+		if err := render.Kustomize(model, kustomize, namespaces); err != nil {
+			fail(err)
 		}
+		return
 	}
 
 	objects := make([]client.Object, 0)
@@ -91,6 +96,14 @@ func run(args []string) {
 	objects = append(objects, manifests...)
 
 	if output {
+		objects, omitted := withoutSecrets(objects)
+		if omitted > 0 {
+			noun := "secrets"
+			if omitted == 1 {
+				noun = "secret"
+			}
+			mustFprintln(os.Stderr, fmt.Sprintf("appd: omitted %d %s; use appd run or --kustomize for full output", omitted, noun))
+		}
 		data, err := render.YAML(objects)
 		if err != nil {
 			fail(err)
@@ -106,30 +119,22 @@ func run(args []string) {
 	}
 }
 
-func initialize(args []string) {
-	if len(args) != 0 {
-		fail(fmt.Errorf("init does not accept arguments"))
-	}
-
-	file, err := os.OpenFile("deploy.hcl", os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
-	if err != nil {
-		fail(fmt.Errorf("create deploy.hcl: %w", err))
-	}
-	defer func() {
-		if err := file.Close(); err != nil {
-			fail(fmt.Errorf("close deploy.hcl: %w", err))
+func withoutSecrets(objects []client.Object) ([]client.Object, int) {
+	filtered := make([]client.Object, 0, len(objects))
+	omitted := 0
+	for _, object := range objects {
+		if _, ok := object.(*corev1.Secret); ok {
+			omitted++
+			continue
 		}
-	}()
-
-	if _, err := file.WriteString(starterHCL); err != nil {
-		fail(fmt.Errorf("write deploy.hcl: %w", err))
+		filtered = append(filtered, object)
 	}
+	return filtered, omitted
 }
 
 func usage() {
 	mustFprintln(os.Stderr, "Usage: appd <command>")
 	mustFprintln(os.Stderr, "\nCommands:")
-	mustFprintln(os.Stderr, "  init    create deploy.hcl in the current directory")
 	mustFprintln(os.Stderr, "  explain list schema topics or describe one")
 	mustFprintln(os.Stderr, "  run     build Kubernetes resources")
 }

@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/hashicorp/hcl/v2"
-	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/joho/godotenv"
 	"gopkg.in/yaml.v3"
 )
@@ -16,12 +15,15 @@ import (
 func (model Model) Validate() error {
 	namespaces := make(map[string]struct{}, len(model.Namespaces))
 	for _, namespace := range model.Namespaces {
-		if err := addName(namespaces, "namespace", namespace.Name); err != nil {
+		if err := addName(namespaces, "namespace", namespace); err != nil {
 			return err
 		}
 	}
 	if len(namespaces) == 0 {
 		return fmt.Errorf("at least one namespace is required")
+	}
+	if model.Defaults != nil && model.Defaults.Replicas != nil && *model.Defaults.Replicas < 0 {
+		return fmt.Errorf("defaults: replicas must be positive")
 	}
 
 	configs := make(map[string]struct{}, len(model.Configs))
@@ -29,70 +31,18 @@ func (model Model) Validate() error {
 		if err := addName(configs, "config", config.Name); err != nil {
 			return err
 		}
-		if err := validateConfigValues(config.Values); err != nil {
+		spec := valuesSpec{
+			Kind:     "config",
+			Source:   config.Source,
+			Prefix:   config.Prefix,
+			Files:    config.Files,
+			Scopes:   config.Scopes,
+			Body:     config.Values,
+			Skip:     []string{"source", "prefix"},
+			Literals: true,
+		}
+		if err := model.validateValues(spec, namespaces); err != nil {
 			return fmt.Errorf("config %q: %w", config.Name, err)
-		}
-		if config.Env != nil {
-			if err := validateEnvSource(model, config.Env); err != nil {
-				return fmt.Errorf("config %q: %w", config.Name, err)
-			}
-			if config.Values != nil {
-				syntaxBody, ok := config.Values.(*hclsyntax.Body)
-				if !ok {
-					return fmt.Errorf("config %q: read config values", config.Name)
-				}
-				envValues, err := godotenv.Read(model.sourcePath(config.Env.Source))
-				if err != nil {
-					return fmt.Errorf("config %q: read env source: %w", config.Name, err)
-				}
-				for name := range syntaxBody.Attributes {
-					if name == "data" {
-						continue
-					}
-					envName := config.Env.Prefix + name
-					if _, exists := envValues[envName]; exists {
-						return fmt.Errorf("config %q: value %q is already provided by env source", config.Name, name)
-					}
-				}
-				for name := range config.Data {
-					envName := config.Env.Prefix + name
-					if _, exists := envValues[envName]; exists {
-						return fmt.Errorf("config %q: value %q is already provided by env source", config.Name, name)
-					}
-				}
-			}
-		}
-		fileNames := make(map[string]struct{}, len(config.Files))
-		for _, file := range config.Files {
-			if err := addName(fileNames, "config file", file.Name); err != nil {
-				return fmt.Errorf("config %q: %w", config.Name, err)
-			}
-			if err := model.validateSourceFile(file.Source); err != nil {
-				return fmt.Errorf("config %q file %q: %w", config.Name, file.Name, err)
-			}
-		}
-		if config.Scope != nil {
-			if err := validateHCLScope(config.Scope.Namespace, namespaces); err != nil {
-				return fmt.Errorf("config %q: %w", config.Name, err)
-			}
-			if err := validateConfigValues(config.Scope.Values); err != nil {
-				return fmt.Errorf("config %q scope %q: %w", config.Name, config.Scope.Namespace, err)
-			}
-			if err := validateEnvSource(model, config.Scope.Env); err != nil {
-				return fmt.Errorf("config %q scope %q: %w", config.Name, config.Scope.Namespace, err)
-			}
-			scopeFileNames := make(map[string]struct{}, len(config.Scope.Files))
-			for _, file := range config.Scope.Files {
-				if err := addName(scopeFileNames, "config file", file.Name); err != nil {
-					return fmt.Errorf("config %q scope %q: %w", config.Name, config.Scope.Namespace, err)
-				}
-				if _, exists := fileNames[file.Name]; !exists {
-					return fmt.Errorf("config %q scope %q: file %q is not declared in the base config", config.Name, config.Scope.Namespace, file.Name)
-				}
-				if err := model.validateSourceFile(file.Source); err != nil {
-					return fmt.Errorf("config %q scope %q file %q: %w", config.Name, config.Scope.Namespace, file.Name, err)
-				}
-			}
 		}
 	}
 
@@ -101,37 +51,16 @@ func (model Model) Validate() error {
 		if err := addName(secrets, "secret", secret.Name); err != nil {
 			return err
 		}
-		if err := validateSecretFiles(model, secret.Files); err != nil {
+		spec := valuesSpec{
+			Kind:   "secret",
+			Source: secret.Source,
+			Prefix: secret.Prefix,
+			Files:  secret.Files,
+			Scopes: secret.Scopes,
+			Skip:   []string{"source", "prefix"},
+		}
+		if err := model.validateValues(spec, namespaces); err != nil {
 			return fmt.Errorf("secret %q: %w", secret.Name, err)
-		}
-		fileNames := make(map[string]struct{}, len(secret.Files))
-		for _, file := range secret.Files {
-			if err := addName(fileNames, "secret file", file.Name); err != nil {
-				return fmt.Errorf("secret %q: %w", secret.Name, err)
-			}
-		}
-		if err := validateEnvSource(model, secret.Env); err != nil {
-			return fmt.Errorf("secret %q: %w", secret.Name, err)
-		}
-		if secret.Scope != nil {
-			if err := validateHCLScope(secret.Scope.Namespace, namespaces); err != nil {
-				return fmt.Errorf("secret %q: %w", secret.Name, err)
-			}
-			if err := validateSecretFiles(model, secret.Scope.Files); err != nil {
-				return fmt.Errorf("secret %q scope %q: %w", secret.Name, secret.Scope.Namespace, err)
-			}
-			scopeFileNames := make(map[string]struct{}, len(secret.Scope.Files))
-			for _, file := range secret.Scope.Files {
-				if err := addName(scopeFileNames, "secret file", file.Name); err != nil {
-					return fmt.Errorf("secret %q scope %q: %w", secret.Name, secret.Scope.Namespace, err)
-				}
-				if _, exists := fileNames[file.Name]; !exists {
-					return fmt.Errorf("secret %q scope %q: file %q is not declared in the base secret", secret.Name, secret.Scope.Namespace, file.Name)
-				}
-			}
-			if err := validateEnvSource(model, secret.Scope.Env); err != nil {
-				return fmt.Errorf("secret %q scope %q: %w", secret.Name, secret.Scope.Namespace, err)
-			}
 		}
 	}
 
@@ -142,7 +71,13 @@ func (model Model) Validate() error {
 		}
 	}
 
+	generated := &generatedNames{
+		configs: make(map[string]string),
+		secrets: make(map[string]string),
+	}
+
 	apps := make(map[string]struct{}, len(model.Apps))
+	routes := make(map[string]struct{})
 	for _, app := range model.Apps {
 		if err := addName(apps, "app", app.Name); err != nil {
 			return err
@@ -150,12 +85,26 @@ func (model Model) Validate() error {
 		if err := validateHCLScope(app.Scope, namespaces); err != nil {
 			return fmt.Errorf("app %q: %w", app.Name, err)
 		}
-		if err := validateEnv(app.Env, configs, secrets); err != nil {
+		if err := model.validateEnv("app", app.Name, app.Env, namespaces, configs, secrets, generated); err != nil {
+			return fmt.Errorf("app %q: %w", app.Name, err)
+		}
+		if err := validatePorts(app.Port, app.Ports); err != nil {
+			return fmt.Errorf("app %q: %w", app.Name, err)
+		}
+		if err := validateHealth(app.Health, app.ServicePorts()); err != nil {
 			return fmt.Errorf("app %q: %w", app.Name, err)
 		}
 		for _, mount := range app.Mounts {
 			if err := validateMount(mount, volumes, configs, secrets); err != nil {
 				return fmt.Errorf("app %q mount: %w", app.Name, err)
+			}
+		}
+		for _, route := range app.Routes {
+			if err := validateHCLScope(route.Scope, namespaces); err != nil {
+				return fmt.Errorf("app %q route %q: %w", app.Name, route.Name, err)
+			}
+			if err := validateRoute(app, route, routes); err != nil {
+				return fmt.Errorf("app %q route %q: %w", app.Name, route.Name, err)
 			}
 		}
 	}
@@ -168,7 +117,13 @@ func (model Model) Validate() error {
 		if err := validateHCLScope(stateful.Scope, namespaces); err != nil {
 			return fmt.Errorf("stateful %q: %w", stateful.Name, err)
 		}
-		if err := validateEnv(stateful.Env, configs, secrets); err != nil {
+		if err := model.validateEnv("stateful", stateful.Name, stateful.Env, namespaces, configs, secrets, generated); err != nil {
+			return fmt.Errorf("stateful %q: %w", stateful.Name, err)
+		}
+		if err := validatePorts(stateful.Port, stateful.Ports); err != nil {
+			return fmt.Errorf("stateful %q: %w", stateful.Name, err)
+		}
+		if err := validateHealth(stateful.Health, stateful.ServicePorts()); err != nil {
 			return fmt.Errorf("stateful %q: %w", stateful.Name, err)
 		}
 		for _, mount := range stateful.Mounts {
@@ -178,58 +133,8 @@ func (model Model) Validate() error {
 		}
 	}
 
-	if err := validateJobs(model.Jobs, namespaces, volumes, configs, secrets); err != nil {
+	if err := model.validateJobs(namespaces, volumes, configs, secrets, generated); err != nil {
 		return err
-	}
-	if err := validateCrons(model.Crons, namespaces, volumes, configs, secrets); err != nil {
-		return err
-	}
-
-	routes := make(map[string]struct{}, len(model.Routes))
-	for _, route := range model.Routes {
-		if err := addName(routes, "route", route.Name); err != nil {
-			return err
-		}
-		if err := validateHCLScope(route.Scope, namespaces); err != nil {
-			return fmt.Errorf("route %q: %w", route.Name, err)
-		}
-		if err := validateReference(route.To, "app", apps); err != nil {
-			return fmt.Errorf("route %q: %w", route.Name, err)
-		}
-		if route.Middleware != nil {
-			if route.Middleware.Headers == nil {
-				return fmt.Errorf("route %q: middleware headers are required", route.Name)
-			}
-			if len(route.Middleware.Headers.AllowOrigins) == 0 {
-				return fmt.Errorf("route %q: middleware allow_origins is required", route.Name)
-			}
-			if len(route.Middleware.Headers.AllowMethods) == 0 {
-				return fmt.Errorf("route %q: middleware allow_methods is required", route.Name)
-			}
-			for _, origin := range route.Middleware.Headers.AllowOrigins {
-				if strings.TrimSpace(origin) == "" {
-					return fmt.Errorf("route %q: middleware allow_origins cannot contain an empty value", route.Name)
-				}
-			}
-			for _, method := range route.Middleware.Headers.AllowMethods {
-				if strings.TrimSpace(method) == "" {
-					return fmt.Errorf("route %q: middleware allow_methods cannot contain an empty value", route.Name)
-				}
-			}
-			for _, header := range route.Middleware.Headers.AllowHeaders {
-				if strings.TrimSpace(header) == "" {
-					return fmt.Errorf("route %q: middleware allow_headers cannot contain an empty value", route.Name)
-				}
-			}
-		}
-		for _, path := range route.Paths {
-			if path.Path == "" || path.Path[0] != '/' {
-				return fmt.Errorf("route %q: path %q must start with /", route.Name, path.Path)
-			}
-			if path.Port != nil && *path.Port <= 0 {
-				return fmt.Errorf("route %q: path %q port must be positive", route.Name, path.Path)
-			}
-		}
 	}
 
 	manifests := make(map[string]struct{}, len(model.Manifests))
@@ -245,51 +150,98 @@ func (model Model) Validate() error {
 	return nil
 }
 
-func validateConfigValues(body hcl.Body) error {
-	if body == nil {
-		return nil
-	}
-	syntaxBody, ok := body.(*hclsyntax.Body)
-	if !ok {
-		return fmt.Errorf("read config values")
-	}
-	for _, block := range syntaxBody.Blocks {
-		if block.Type != "env" && block.Type != "file" && block.Type != "scope" {
-			return fmt.Errorf("only environment variable attributes are allowed")
+type valuesSpec struct {
+	Kind     string
+	Source   string
+	Prefix   string
+	Files    []File
+	Scopes   []Scope
+	Body     hcl.Body
+	Skip     []string
+	Literals bool
+}
+
+func (model Model) validateValues(spec valuesSpec, namespaces map[string]struct{}) error {
+	if spec.Source != "" {
+		if err := model.validateSourceFile(spec.Source); err != nil {
+			return err
 		}
 	}
-	return nil
-}
 
-func validateEnvSource(model Model, env *EnvSource) error {
-	if env == nil {
-		return nil
-	}
-	if err := model.validateSourceFile(env.Source); err != nil {
-		return err
-	}
-	return nil
-}
-
-func validateSecretFiles(model Model, files []SecretFile) error {
-	for _, file := range files {
+	fileNames := make(map[string]struct{}, len(spec.Files))
+	for _, file := range spec.Files {
+		if err := addName(fileNames, spec.Kind+" file", file.Name); err != nil {
+			return err
+		}
 		if err := model.validateSourceFile(file.Source); err != nil {
 			return fmt.Errorf("file %q: %w", file.Name, err)
 		}
 	}
+
+	values, err := StringValues(spec.Body, spec.Skip...)
+	if err != nil {
+		return err
+	}
+	if !spec.Literals && len(values) > 0 {
+		return fmt.Errorf("%s values are not allowed", spec.Kind)
+	}
+	if spec.Literals && spec.Source != "" && len(values) > 0 {
+		envValues, err := godotenv.Read(model.sourcePath(spec.Source))
+		if err != nil {
+			return fmt.Errorf("read env source: %w", err)
+		}
+		for name := range values {
+			if _, exists := envValues[spec.Prefix+name]; exists {
+				return fmt.Errorf("value %q is already provided by env source", name)
+			}
+		}
+	}
+	if spec.Source == "" && len(values) == 0 && len(spec.Files) == 0 {
+		return fmt.Errorf("at least one of source, values, or file is required")
+	}
+
+	for _, scope := range spec.Scopes {
+		if err := validateHCLScope(scope.Namespace, namespaces); err != nil {
+			return err
+		}
+		if scope.Source != "" {
+			if err := model.validateSourceFile(scope.Source); err != nil {
+				return fmt.Errorf("scope %q: %w", scope.Namespace, err)
+			}
+		}
+		scopeFileNames := make(map[string]struct{}, len(scope.Files))
+		for _, file := range scope.Files {
+			if err := addName(scopeFileNames, spec.Kind+" file", file.Name); err != nil {
+				return fmt.Errorf("scope %q: %w", scope.Namespace, err)
+			}
+			if _, exists := fileNames[file.Name]; !exists {
+				return fmt.Errorf("scope %q: file %q is not declared in the base %s", scope.Namespace, file.Name, spec.Kind)
+			}
+			if err := model.validateSourceFile(file.Source); err != nil {
+				return fmt.Errorf("scope %q file %q: %w", scope.Namespace, file.Name, err)
+			}
+		}
+		scopeValues, err := StringValues(scope.Values, "source", "prefix")
+		if err != nil {
+			return fmt.Errorf("scope %q: %w", scope.Namespace, err)
+		}
+		if !spec.Literals && len(scopeValues) > 0 {
+			return fmt.Errorf("scope %q: %s values are not allowed", scope.Namespace, spec.Kind)
+		}
+	}
 	return nil
 }
 
-func validateJobs(jobs []Job, namespaces, volumes, configs, secrets map[string]struct{}) error {
-	names := make(map[string]struct{}, len(jobs))
-	for _, job := range jobs {
+func (model Model) validateJobs(namespaces, volumes, configs, secrets map[string]struct{}, generated *generatedNames) error {
+	names := make(map[string]struct{}, len(model.Jobs))
+	for _, job := range model.Jobs {
 		if err := addName(names, "job", job.Name); err != nil {
 			return err
 		}
 		if err := validateHCLScope(job.Scope, namespaces); err != nil {
 			return fmt.Errorf("job %q: %w", job.Name, err)
 		}
-		if err := validateEnv(job.Env, configs, secrets); err != nil {
+		if err := model.validateEnv("job", job.Name, job.Env, namespaces, configs, secrets, generated); err != nil {
 			return fmt.Errorf("job %q: %w", job.Name, err)
 		}
 		for _, mount := range job.Mounts {
@@ -301,42 +253,154 @@ func validateJobs(jobs []Job, namespaces, volumes, configs, secrets map[string]s
 	return nil
 }
 
-func validateCrons(crons []Cron, namespaces, volumes, configs, secrets map[string]struct{}) error {
-	names := make(map[string]struct{}, len(crons))
-	for _, cron := range crons {
-		if err := addName(names, "cron", cron.Name); err != nil {
+type generatedNames struct {
+	configs map[string]string
+	secrets map[string]string
+}
+
+func (generated *generatedNames) claim(kind, name, owner string, declared map[string]struct{}) error {
+	names := generated.configs
+	if kind == "secret" {
+		names = generated.secrets
+	}
+	if _, exists := declared[name]; exists {
+		return fmt.Errorf("generated %s %q collides with a declared %s block", kind, name, kind)
+	}
+	if previous, exists := names[name]; exists {
+		return fmt.Errorf("generated %s %q is already used by %s", kind, name, previous)
+	}
+	names[name] = owner
+	return nil
+}
+
+func (model Model) validateEnv(kind, name string, env *Env, namespaces, configs, secrets map[string]struct{}, generated *generatedNames) error {
+	if env == nil {
+		return nil
+	}
+	owner := kind + " " + name
+	if env.Config != nil {
+		generatedName := name + "-config"
+		if err := generated.claim("config", generatedName, owner, configs); err != nil {
 			return err
 		}
-		if err := validateHCLScope(cron.Scope, namespaces); err != nil {
-			return fmt.Errorf("cron %q: %w", cron.Name, err)
+		spec := valuesSpec{
+			Kind:     "config",
+			Source:   env.Config.Source,
+			Prefix:   env.Config.Prefix,
+			Files:    env.Config.Files,
+			Scopes:   env.Config.Scopes,
+			Body:     env.Config.Values,
+			Skip:     []string{"source", "prefix"},
+			Literals: true,
 		}
-		if err := validateEnv(cron.Env, configs, secrets); err != nil {
-			return fmt.Errorf("cron %q: %w", cron.Name, err)
+		if err := model.validateValues(spec, namespaces); err != nil {
+			return fmt.Errorf("config: %w", err)
 		}
-		for _, mount := range cron.Mounts {
-			if err := validateMount(mount, volumes, configs, secrets); err != nil {
-				return fmt.Errorf("cron %q mount: %w", cron.Name, err)
-			}
+	}
+	if env.Secret != nil {
+		generatedName := name + "-secret"
+		if err := generated.claim("secret", generatedName, owner, secrets); err != nil {
+			return err
+		}
+		spec := valuesSpec{
+			Kind:   "secret",
+			Source: env.Secret.Source,
+			Prefix: env.Secret.Prefix,
+			Files:  env.Secret.Files,
+			Scopes: env.Secret.Scopes,
+			Body:   env.Secret.Values,
+			Skip:   []string{"source", "prefix"},
+		}
+		if err := model.validateValues(spec, namespaces); err != nil {
+			return fmt.Errorf("secret: %w", err)
+		}
+	}
+	if err := validateReference(env.FromConfig, "config", configs); err != nil {
+		return fmt.Errorf("from_config: %w", err)
+	}
+	if err := validateReference(env.FromSecret, "secret", secrets); err != nil {
+		return fmt.Errorf("from_secret: %w", err)
+	}
+	values, err := StringValues(env.Values, "from_config", "from_secret")
+	if err != nil {
+		return err
+	}
+	for name := range values {
+		if _, reserved := DownwardEnv[name]; reserved {
+			return fmt.Errorf("environment variable %q is provided automatically", name)
 		}
 	}
 	return nil
 }
 
-func validateEnv(env *Env, configs, secrets map[string]struct{}) error {
-	if env == nil {
+func validateRoute(app App, route Route, names map[string]struct{}) error {
+	if err := addName(names, "route", route.Name); err != nil {
+		return err
+	}
+	if strings.TrimSpace(route.Host) == "" {
+		return fmt.Errorf("host is required")
+	}
+	if route.Path != "" && len(route.Paths) > 0 {
+		return fmt.Errorf("use path or paths, not both")
+	}
+	paths := route.Paths
+	if route.Path != "" {
+		paths = []string{route.Path}
+	}
+	seen := make(map[string]struct{}, len(paths))
+	for _, path := range paths {
+		if path == "" || path[0] != '/' {
+			return fmt.Errorf("path %q must start with /", path)
+		}
+		if _, exists := seen[path]; exists {
+			return fmt.Errorf("path %q is declared more than once", path)
+		}
+		seen[path] = struct{}{}
+	}
+	if route.Port != nil && *route.Port <= 0 {
+		return fmt.Errorf("port must be positive")
+	}
+	if route.Port == nil && len(app.ServicePorts()) == 0 {
+		return fmt.Errorf("app has no port and route has no port")
+	}
+	return nil
+}
+
+func validateHealth(health *Health, ports []int32) error {
+	if health == nil {
 		return nil
 	}
-	if err := validateReference(env.Config, "config", configs); err != nil {
-		return fmt.Errorf("config: %w", err)
+	if strings.TrimSpace(health.Path) == "" {
+		return fmt.Errorf("health path is required")
 	}
-	if err := validateReference(env.Secret, "secret", secrets); err != nil {
-		return fmt.Errorf("secret: %w", err)
+	if health.Port < 0 {
+		return fmt.Errorf("health port must be positive")
 	}
-	fields := make(map[string]struct{}, len(env.Fields))
-	for _, field := range env.Fields {
-		if err := addName(fields, "environment field", field.Name); err != nil {
-			return err
+	if health.Port == 0 && len(ports) == 0 {
+		return fmt.Errorf("health port is required when there is no port")
+	}
+	return nil
+}
+
+func validatePorts(port int32, ports []int32) error {
+	if port != 0 && len(ports) > 0 {
+		return fmt.Errorf("use port or ports, not both")
+	}
+	if port < 0 {
+		return fmt.Errorf("port must be positive")
+	}
+	seen := make(map[int32]struct{}, len(ports)+1)
+	if port != 0 {
+		seen[port] = struct{}{}
+	}
+	for _, value := range ports {
+		if value <= 0 {
+			return fmt.Errorf("port %d must be positive", value)
 		}
+		if _, exists := seen[value]; exists {
+			return fmt.Errorf("port %d is declared more than once", value)
+		}
+		seen[value] = struct{}{}
 	}
 	return nil
 }

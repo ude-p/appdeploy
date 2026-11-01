@@ -2,6 +2,7 @@ package main
 
 import (
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -18,7 +19,8 @@ func TestSchemaTopicsFollowModel(t *testing.T) {
 		}
 		want = append(want, strings.Split(tag, ",")[0])
 	}
-	want = append(want, "scope")
+	want = slices.Insert(want, slices.Index(want, "manifest"), "route")
+	want = append(want, "env", "scope")
 
 	if len(schemaTopics) != len(want) {
 		t.Fatalf("got %d schema topics, want %d", len(schemaTopics), len(want))

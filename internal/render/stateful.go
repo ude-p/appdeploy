@@ -21,22 +21,18 @@ func buildStatefulSets(model config.Model, namespace string) ([]client.Object, e
 		replicas := int32(1)
 		container := corev1.Container{Name: stateful.Name, Image: stateful.Image, ImagePullPolicy: corev1.PullAlways}
 
-		if stateful.Env != nil {
-			envFrom, env, err := buildEnv(stateful.Env)
-			if err != nil {
-				return nil, fmt.Errorf("stateful %q: %w", stateful.Name, err)
-			}
-			container.EnvFrom = envFrom
-			container.Env = env
+		envFrom, env, err := buildEnv(stateful.Name, stateful.Env)
+		if err != nil {
+			return nil, fmt.Errorf("stateful %q: %w", stateful.Name, err)
 		}
+		container.EnvFrom = envFrom
+		container.Env = env
 
-		for _, port := range stateful.Ports {
-			containerPort := port.Container
-			if containerPort == 0 {
-				containerPort = port.Service
-			}
-			container.Ports = append(container.Ports, corev1.ContainerPort{ContainerPort: containerPort})
+		ports := stateful.ServicePorts()
+		for _, port := range ports {
+			container.Ports = append(container.Ports, corev1.ContainerPort{ContainerPort: port})
 		}
+		configureProbes(&container, stateful.Health, ports)
 		mounts, volumes, err := buildMounts(stateful.Mounts)
 		if err != nil {
 			return nil, fmt.Errorf("stateful %q: %w", stateful.Name, err)
@@ -65,6 +61,11 @@ func buildStatefulSets(model config.Model, namespace string) ([]client.Object, e
 			container.VolumeMounts = append(container.VolumeMounts, corev1.VolumeMount{Name: volume.Name, MountPath: volume.Path})
 		}
 
+		resources, err := inlineResources(model, namespace, stateful.Name, stateful.Env)
+		if err != nil {
+			return nil, fmt.Errorf("stateful %q: %w", stateful.Name, err)
+		}
+		objects = append(objects, resources...)
 		objects = append(objects, &appsv1.StatefulSet{
 			ObjectMeta: metav1.ObjectMeta{Name: stateful.Name, Namespace: namespace},
 			Spec: appsv1.StatefulSetSpec{
@@ -74,7 +75,7 @@ func buildStatefulSets(model config.Model, namespace string) ([]client.Object, e
 				VolumeClaimTemplates: claimTemplates,
 				Template: corev1.PodTemplateSpec{
 					ObjectMeta: metav1.ObjectMeta{Labels: labels},
-					Spec: corev1.PodSpec{NodeSelector: stateful.NodeSelector, Containers: []corev1.Container{container}, Volumes: volumes},
+					Spec: corev1.PodSpec{NodeSelector: nodeSelector(model, stateful.NodeSelector), Containers: []corev1.Container{container}, Volumes: volumes},
 				},
 			},
 		})
@@ -84,7 +85,7 @@ func buildStatefulSets(model config.Model, namespace string) ([]client.Object, e
 			Spec: corev1.ServiceSpec{
 				ClusterIP: corev1.ClusterIPNone,
 				Selector:  labels,
-				Ports:     servicePorts(stateful.Ports),
+				Ports:     servicePorts(stateful.ServicePorts()),
 			},
 		})
 	}

@@ -2,13 +2,14 @@ package render
 
 import (
 	"fmt"
+	"maps"
+	"slices"
 
 	"github.com/ude-p/appdeploy/internal/config"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/intstr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -20,14 +21,22 @@ func buildApps(model config.Model, namespace string) ([]client.Object, error) {
 		}
 		labels := map[string]string{"app.kubernetes.io/name": app.Name}
 		replicas := int32(1)
+		if model.Defaults != nil && model.Defaults.Replicas != nil {
+			replicas = *model.Defaults.Replicas
+		}
 		if app.Replicas != nil {
 			replicas = *app.Replicas
 		}
 
-		container, volumes, err := buildContainer(app)
+		container, volumes, err := buildContainer(model, app)
 		if err != nil {
 			return nil, fmt.Errorf("app %q: %w", app.Name, err)
 		}
+		resources, err := inlineResources(model, namespace, app.Name, app.Env)
+		if err != nil {
+			return nil, fmt.Errorf("app %q: %w", app.Name, err)
+		}
+		objects = append(objects, resources...)
 		objects = append(objects, &appsv1.Deployment{
 			ObjectMeta: metav1.ObjectMeta{Name: app.Name, Namespace: namespace},
 			Spec: appsv1.DeploymentSpec{
@@ -36,21 +45,21 @@ func buildApps(model config.Model, namespace string) ([]client.Object, error) {
 				Template: corev1.PodTemplateSpec{
 					ObjectMeta: metav1.ObjectMeta{Labels: labels},
 					Spec: corev1.PodSpec{
-						NodeSelector: app.NodeSelector,
+						NodeSelector: nodeSelector(model, app.NodeSelector),
 						Containers: []corev1.Container{container},
 						Volumes:    volumes,
 					},
 				},
 			},
 		})
-		if len(app.Ports) > 0 {
+		if len(app.ServicePorts()) > 0 {
 			objects = append(objects, buildService(app, namespace))
 		}
 	}
 	return objects, nil
 }
 
-func buildContainer(app config.App) (corev1.Container, []corev1.Volume, error) {
+func buildContainer(model config.Model, app config.App) (corev1.Container, []corev1.Volume, error) {
 	container := corev1.Container{
 		Name:            app.Name,
 		Image:           app.Image,
@@ -58,29 +67,28 @@ func buildContainer(app config.App) (corev1.Container, []corev1.Volume, error) {
 		Command:         app.Command,
 		Args:            app.Args,
 	}
-	if app.Env != nil {
-		envFrom, env, err := buildEnv(app.Env)
-		if err != nil {
-			return corev1.Container{}, nil, err
-		}
-		container.EnvFrom = envFrom
-		container.Env = env
+	envFrom, env, err := buildEnv(app.Name, app.Env)
+	if err != nil {
+		return corev1.Container{}, nil, err
+	}
+	container.EnvFrom = envFrom
+	container.Env = env
+
+	ports := app.ServicePorts()
+	for _, port := range ports {
+		container.Ports = append(container.Ports, corev1.ContainerPort{ContainerPort: port})
 	}
 
-	for _, port := range app.Ports {
-		containerPort := port.Container
-		if containerPort == 0 {
-			containerPort = port.Service
-		}
-		container.Ports = append(container.Ports, corev1.ContainerPort{ContainerPort: containerPort})
+	resources := app.Resources
+	if resources == nil && model.Defaults != nil {
+		resources = model.Defaults.Resources
 	}
-
-	if app.Resources != nil {
-		cpu, err := resource.ParseQuantity(app.Resources.CPU)
+	if resources != nil {
+		cpu, err := resource.ParseQuantity(resources.CPU)
 		if err != nil {
 			return corev1.Container{}, nil, fmt.Errorf("parse CPU: %w", err)
 		}
-		memory, err := resource.ParseQuantity(app.Resources.Memory)
+		memory, err := resource.ParseQuantity(resources.Memory)
 		if err != nil {
 			return corev1.Container{}, nil, fmt.Errorf("parse memory: %w", err)
 		}
@@ -90,13 +98,7 @@ func buildContainer(app config.App) (corev1.Container, []corev1.Volume, error) {
 		}
 	}
 
-	if app.Health != nil {
-		probe := &corev1.Probe{ProbeHandler: corev1.ProbeHandler{
-			HTTPGet: &corev1.HTTPGetAction{Path: app.Health.Path, Port: intstr.FromInt32(app.Health.Port)},
-		}}
-		container.LivenessProbe = probe
-		container.ReadinessProbe = probe.DeepCopy()
-	}
+	configureProbes(&container, app.Health, ports)
 
 	mounts, volumes, err := buildMounts(app.Mounts)
 	if err != nil {
@@ -107,38 +109,49 @@ func buildContainer(app config.App) (corev1.Container, []corev1.Volume, error) {
 	return container, volumes, nil
 }
 
-func buildEnv(env *config.Env) ([]corev1.EnvFromSource, []corev1.EnvVar, error) {
-	if env == nil {
-		return nil, nil, nil
-	}
-	envFrom := make([]corev1.EnvFromSource, 0, 2)
-	if config.HasExpression(env.Config) {
-		name, err := referenceName(env.Config)
+func buildEnv(workloadName string, env *config.Env) ([]corev1.EnvFromSource, []corev1.EnvVar, error) {
+	envFrom := make([]corev1.EnvFromSource, 0, 4)
+	values := map[string]string{}
+	if env != nil {
+		if env.Config != nil {
+			envFrom = append(envFrom, corev1.EnvFromSource{
+				ConfigMapRef: &corev1.ConfigMapEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: workloadName + "-config"}},
+			})
+		}
+		if env.Secret != nil {
+			envFrom = append(envFrom, corev1.EnvFromSource{
+				SecretRef: &corev1.SecretEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: workloadName + "-secret"}},
+			})
+		}
+		if config.HasExpression(env.FromConfig) {
+			name, err := referenceName(env.FromConfig)
+			if err != nil {
+				return nil, nil, err
+			}
+			envFrom = append(envFrom, corev1.EnvFromSource{
+				ConfigMapRef: &corev1.ConfigMapEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: name}},
+			})
+		}
+		if config.HasExpression(env.FromSecret) {
+			name, err := referenceName(env.FromSecret)
+			if err != nil {
+				return nil, nil, err
+			}
+			envFrom = append(envFrom, corev1.EnvFromSource{
+				SecretRef: &corev1.SecretEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: name}},
+			})
+		}
+		var err error
+		values, err = config.StringValues(env.Values, "from_config", "from_secret")
 		if err != nil {
 			return nil, nil, err
 		}
-		envFrom = append(envFrom, corev1.EnvFromSource{
-			ConfigMapRef: &corev1.ConfigMapEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: name}},
-		})
 	}
-	if config.HasExpression(env.Secret) {
-		name, err := referenceName(env.Secret)
-		if err != nil {
-			return nil, nil, err
-		}
-		envFrom = append(envFrom, corev1.EnvFromSource{
-			SecretRef: &corev1.SecretEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: name}},
-		})
+	fields := make([]corev1.EnvVar, 0, len(values)+len(config.DownwardEnv))
+	for _, name := range slices.Sorted(maps.Keys(values)) {
+		fields = append(fields, corev1.EnvVar{Name: name, Value: values[name]})
 	}
-	fields := make([]corev1.EnvVar, 0, len(env.Fields))
-	for _, field := range env.Fields {
-		fields = append(fields, corev1.EnvVar{
-			Name: field.Name,
-			ValueFrom: &corev1.EnvVarSource{
-				FieldRef: &corev1.ObjectFieldSelector{FieldPath: field.Path},
-			},
-		})
-	}
+	fields = append(fields, downwardEnv()...)
 	return envFrom, fields, nil
 }
 
@@ -174,7 +187,7 @@ func buildService(app config.App, namespace string) *corev1.Service {
 		ObjectMeta: metav1.ObjectMeta{Name: app.Name, Namespace: namespace},
 		Spec: corev1.ServiceSpec{
 			Selector: map[string]string{"app.kubernetes.io/name": app.Name},
-			Ports:    servicePorts(app.Ports),
+			Ports:    servicePorts(app.ServicePorts()),
 		},
 	}
 }
